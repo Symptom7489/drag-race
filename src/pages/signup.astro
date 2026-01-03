@@ -1,16 +1,22 @@
 ---
 import { sql } from '../lib/db';
 
-if (Astro.request.method === "POST") {
-  const data = await Astro.request.formData();
-  const user = data.get("username");
-  const pass = data.get("password");
+let error = null;
 
+if (Astro.request.method === "POST") {
   try {
-    await sql`INSERT INTO users (username, password_hash) VALUES (${user}, ${pass})`;
-    return Astro.redirect('/login');
+    const data = await Astro.request.formData();
+    const user = data.get("username");
+    const pass = data.get("password");
+
+    if (user && pass) {
+      await sql`INSERT INTO users (username, password_hash) VALUES (${user}, ${pass})`;
+      // Change this to your main dashboard or login page
+      return Astro.redirect('/'); 
+    }
   } catch (e) {
-    var error = "Username already taken!";
+    console.error(e);
+    error = "Could not create account. " + e.message;
   }
 }
 ---
