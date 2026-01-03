@@ -1,16 +1,15 @@
 ---
+// src/pages/index.astro
+import { neon } from '@neondatabase/serverless';
 
+const sql = neon(import.meta.env.DATABASE_URL);
+const response = await sql`SELECT 'Connected to Neon!' as status`;
+const status = response[0].status;
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
+<html>
+  <body>
+    <h1>{status}</h1>
+    <p>If you see 'Connected to Neon!' above, your setup is perfect.</p>
+  </body>
 </html>
