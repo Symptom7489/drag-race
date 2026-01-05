@@ -1,0 +1,79 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { sql } from '../lib/db';
+
+const userId = Astro.cookies.get("userId")?.value;
+
+if (Astro.request.method === "POST") {
+  const data = await Astro.request.formData();
+  const action = data.get("action");
+
+  if (action === "create_league") {
+    const name = data.get("leagueName");
+    const inviteCode = Math.random().toString(36).substring(2, 7).toUpperCase(); // e.g., "8K3J2"
+
+    await sql`
+      INSERT INTO leagues (name, invite_code, owner_id) 
+      VALUES (${name}, ${inviteCode}, ${userId})
+    `;
+    
+    // Automatically join the creator to their own league
+    await sql`
+      INSERT INTO league_members (league_id, user_id)
+      SELECT id, ${userId} FROM leagues WHERE invite_code = ${inviteCode}
+    `;
+  }
+}
+
+const myLeagues = await sql`
+  SELECT l.* FROM leagues l
+  JOIN league_members lm ON l.id = lm.league_id
+  WHERE lm.user_id = ${userId}
+`;
+---
+
+<MainLayout title="My Leagues">
+  <div class="max-w-4xl mx-auto space-y-12">
+    
+    <section>
+      <h2 class="text-2xl font-black uppercase italic mb-6">My Leagues</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {myLeagues.map(league => (
+          <a href={`/leagues/${league.invite_code}`} class="block p-6 bg-white border border-slate-200 rounded-2xl hover:border-pink-500 hover:shadow-lg transition-all">
+            <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">League Name</span>
+            <h3 class="text-xl font-black text-slate-800">{league.league_name}</h3>
+            <div class="mt-4 flex justify-between items-center text-sm font-bold text-pink-600">
+              <div class="bg-pink-50 border-2 border-dashed border-pink-200 p-4 rounded-xl text-center">
+  <span class="text-xs font-black uppercase text-pink-400 block mb-1">Invite Friends With This Code</span>
+  <code class="text-2xl font-mono font-black text-pink-600 tracking-widest selection:bg-pink-200">
+    {league.invite_code}
+  </code>
+</div>
+              <span>View Leaderboard →</span>
+            </div>
+          </a>
+        ))}
+      </div>
+    </section>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div class="bg-slate-900 text-white p-8 rounded-3xl shadow-xl">
+        <h3 class="text-2xl font-bold mb-2 text-pink-400">Start a League</h3>
+        <p class="text-slate-400 text-sm mb-6">Be the commissioner. Invite your friends to compete.</p>
+        <form action="/api/create-league" method="POST" class="space-y-4">
+          <input name="leagueName" placeholder="League Name..." class="w-full p-3 rounded-xl bg-slate-800 border-none text-white" required />
+          <button class="w-full bg-pink-600 p-3 rounded-xl font-bold">Generate Invite Code</button>
+        </form>
+      </div>
+
+      <div class="bg-white p-8 rounded-3xl shadow-xl border border-slate-100">
+        <h3 class="text-2xl font-bold mb-2 text-slate-800">Join a League</h3>
+        <p class="text-slate-500 text-sm mb-6">Got a code from a friend? Enter it here to join.</p>
+        <form action="/api/join-league" method="POST" class="space-y-4">
+          <input name="inviteCode" placeholder="Enter 6-digit code..." class="w-full p-3 rounded-xl bg-slate-100 border-none uppercase font-mono tracking-widest" required />
+          <button class="w-full bg-slate-800 text-white p-3 rounded-xl font-bold">Join League</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</MainLayout>

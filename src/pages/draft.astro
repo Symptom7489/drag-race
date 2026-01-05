@@ -1,0 +1,136 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { sql } from '../lib/db';
+
+const userId = Astro.cookies.get("userId")?.value;
+if (!userId) return Astro.redirect('/login');
+
+// 1. Get episode selection (with safety fallback)
+const settings = await sql`SELECT value FROM settings WHERE key = 'current_episode'`;
+const currentEpVal = settings.length > 0 ? settings[0].value : "1";
+const activeEp = parseInt(Astro.url.searchParams.get('episode') || currentEpVal);
+
+// 2. Check if this episode is locked
+const lockCheck = await sql`SELECT value FROM settings WHERE key = ${'locked_ep_' + activeEp}`;
+const isLocked = lockCheck.length > 0 && lockCheck[0].value === 'true';
+
+// 3. Check for existing roster (JOINING for the photos!)
+const existingRoster = await sql`
+  SELECT r.*, q.image_url 
+  FROM rosters r
+  LEFT JOIN queens q ON r.queen_name = q.name
+  WHERE r.user_id = ${userId} AND r.episode_number = ${activeEp} 
+  ORDER BY r.rank ASC
+`;
+
+const queens = await sql`SELECT * FROM queens ORDER BY name ASC`;
+const hasDrafted = existingRoster.length > 0;
+
+// 4. Handle Save (Updated for 4 Queens)
+if (Astro.request.method === "POST") {
+  const data = await Astro.request.formData();
+  const pickedQueens = [
+    data.get("queen1"),
+    data.get("queen2"),
+    data.get("queen3"),
+    data.get("queen4") // Added the 4th pick
+  ].filter(Boolean); // Only save if they actually picked a name
+
+  if (pickedQueens.length > 0) {
+    await sql`DELETE FROM rosters WHERE user_id = ${userId} AND episode_number = ${activeEp}`;
+    
+    for (let i = 0; i < pickedQueens.length; i++) {
+      await sql`
+        INSERT INTO rosters (user_id, queen_name, rank, episode_number)
+        VALUES (${userId}, ${pickedQueens[i]}, ${i + 1}, ${activeEp})
+      `;
+    }
+    return Astro.redirect('/dashboard');
+  }
+}
+---
+
+<MainLayout title="Layout Test">
+  <div class="max-w-2xl mx-auto py-10 px-4">
+    
+<form method="POST" class="space-y-8">
+  <div class="grid grid-cols-2 gap-4">
+    {[1, 2, 3, 4].map((num) => (
+      <div class="group bg-white rounded-[2rem] overflow-hidden border-2 border-slate-100 shadow-sm flex flex-col transition-all hover:border-pink-300 hover:shadow-md">
+        
+        <div class="aspect-[4/3] bg-slate-100 flex items-center justify-center relative overflow-hidden">
+          <img 
+            id={`img-slot-${num}`}
+            src={existingRoster[num-1]?.image_url || ""} 
+            class={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ease-out group-hover:scale-110 ${existingRoster[num-1]?.image_url ? 'opacity-100' : 'opacity-0'}`}
+          />
+          
+          <span id={`icon-slot-${num}`} class="text-3xl opacity-20 grayscale transition-transform group-hover:scale-110">👸</span>
+          
+          <div class="absolute top-3 left-3 bg-slate-900 text-white text-[10px] font-black w-6 h-6 rounded-lg flex items-center justify-center italic z-10 shadow-lg group-hover:bg-pink-600 transition-colors">
+            {num}
+          </div>
+        </div>
+
+        <div class="p-3 bg-white z-20">
+          <label class="text-[9px] font-black uppercase text-slate-400 block mb-1 ml-1">Choice #{num}</label>
+          <select 
+            name={`queen${num}`} 
+            id={`select-slot-${num}`}
+            required
+            class="queen-selector w-full bg-slate-50 border-none rounded-xl py-2 px-3 text-xs font-bold uppercase text-slate-800 focus:ring-2 focus:ring-pink-500 outline-none transition-colors"
+          >
+            <option value="">Select...</option>
+            {queens.map(q => (
+              <option 
+                value={q.name} 
+                data-photo={q.image_url} 
+                selected={existingRoster[num-1]?.queen_name === q.name}
+              >
+                {q.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <button type="submit" class="w-full bg-pink-600 text-white font-black py-5 rounded-[2rem] uppercase tracking-widest shadow-xl shadow-pink-100 hover:bg-pink-700 transition-all active:scale-95">
+    Lock in Team
+  </button>
+</form>
+
+  </div>
+</MainLayout>
+
+<script is:inline>
+  // Find all our dropdowns
+  const selectors = document.querySelectorAll('.queen-selector');
+
+  selectors.forEach(select => {
+    select.addEventListener('change', (e) => {
+      // 1. Get the slot number (from the ID)
+      const slotNum = e.target.id.split('-').pop();
+      const img = document.getElementById(`img-slot-${slotNum}`);
+      const icon = document.getElementById(`icon-slot-${slotNum}`);
+
+      // 2. Get the photo URL from the selected option's data attribute
+      const selectedOption = e.target.options[e.target.selectedIndex];
+      const photoUrl = selectedOption.getAttribute('data-photo');
+
+      if (photoUrl && photoUrl !== "") {
+        // Show image, hide placeholder icon
+        img.src = photoUrl;
+        img.classList.remove('opacity-0');
+        img.classList.add('opacity-100');
+        icon.classList.add('hidden');
+      } else {
+        // Hide image, show placeholder icon
+        img.classList.add('opacity-0');
+        img.classList.remove('opacity-100');
+        icon.classList.remove('hidden');
+      }
+    });
+  });
+</script>

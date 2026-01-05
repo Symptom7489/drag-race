@@ -1,0 +1,37 @@
+---
+import { sql } from '../../lib/db';
+
+// The categories you listed earlier
+const categories = [
+  "Win Episode", "In The Top", "In The Bottom", "Big Ru laugh", 
+  "Shoes off LS", "Fourth wall", "The Hem", "Producer Intervention"
+  // ... add the rest here
+];
+
+if (Astro.request.method === "POST") {
+  const data = await Astro.request.formData();
+  await sql`
+    INSERT INTO queen_box_scores (queen_name, episode_number, category, points)
+    VALUES (
+      ${data.get('queen')}, 
+      ${parseInt(data.get('episode'))}, 
+      ${data.get('category')}, 
+      ${parseInt(data.get('points'))}
+    )
+  `;
+}
+---
+<form method="POST" class="admin-form">
+  <h1>Admin: Add Episode Points</h1>
+  
+  <input name="queen" placeholder="Queen Name" required />
+  <input name="episode" type="number" placeholder="Episode #" required />
+  
+  <select name="category">
+    {categories.map(c => <option value={c}>{c}</option>)}
+  </select>
+
+  <input name="points" type="number" placeholder="Points (e.g. 5 or -2)" required />
+  
+  <button type="submit">Log Score</button>
+</form>

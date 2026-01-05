@@ -1,0 +1,280 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { sql } from '../../lib/db';
+
+const userId = Astro.cookies.get("userId")?.value;
+const user = await sql`SELECT username FROM users WHERE id = ${userId}`;
+
+// 1. Security Check
+if (!user[0] || user[0].username !== 'admin') {
+  return Astro.redirect('/dashboard');
+}
+
+const queens = await sql`SELECT name FROM queens WHERE is_active = true ORDER BY name ASC`;
+const settings = await sql`SELECT value FROM settings WHERE key = 'current_episode'`;
+
+const scoringRules = [
+  { label: 'Win Episode', pts: 1, cat: 'Perf' },
+  { label: 'In The Top', pts: 1, cat: 'Perf' },
+  { label: 'Mini Win', pts: 1, cat: 'Perf' },
+  { label: 'Settling for Safe', pts: 1, cat: 'Perf' },
+  { label: 'Survive Lip Sync', pts: 1, cat: 'Perf' },
+  { label: 'In The Bottom', pts: 1, cat: 'Perf' },
+  { label: 'Sent Home', pts: 1, cat: 'Perf' },
+  { label: 'Lose Talent Show', pts: 1, cat: 'Perf' },
+  { label: 'Producer Intervention', pts: 1, cat: 'Drama' },
+  { label: 'Fourth Wall Break', pts: 1, cat: 'Drama' },
+  { label: 'Storming Out', pts: 1, cat: 'Drama' },
+  { label: 'Emotional Support Queen', pts: 1, cat: 'Drama' },
+  { label: 'Who Should Go Home?', pts: 1, cat: 'Drama' },
+  { label: 'Diva Demands Role', pts: 1, cat: 'Drama' },
+  { label: 'Help a Bitch Out', pts: 1, cat: 'Drama' },
+  { label: 'Post-Elim Queen Back', pts: 1, cat: 'Drama' },
+  { label: 'Runway/Wig Malfunction', pts: 1, cat: 'Look' },
+  { label: 'Shoes off LS', pts: 1, cat: 'Look' },
+  { label: 'Falling (not Runway)', pts: 1, cat: 'Look' },
+  { label: 'The Hem / The Points', pts: 1, cat: 'Look' },
+  { label: 'Choreo No Heels', pts: 1, cat: 'Look' },
+  { label: 'Last Look Before Titles', pts: 1, cat: 'Look' },
+  { label: 'Big Ru Laugh', pts: 1, cat: 'Misc' },
+  { label: 'Ru Laughs at Exit Line', pts: 1, cat: 'Misc' },
+  { label: 'Pit Crew Bonus', pts: 1, cat: 'Misc' },
+  { label: 'Last One Picked', pts: 1, cat: 'Misc' },
+  { label: 'Win/Place/Show Season', pts: 1, cat: 'Misc' },
+  { label: 'Miss Congeniality', pts: 1, cat: 'Misc' },
+  { label: 'Let\'s get out of drag', pts: 1, cat: 'Misc' }
+];
+
+let successMessage = null;
+
+// 2. Handle POST Request (Saving)
+if (Astro.request.method === "POST") {
+  const data = await Astro.request.formData();
+  const episode = parseInt(data.get("episode"));
+
+  // Clear existing to allow for overwriting/corrections
+  await sql`DELETE FROM queen_box_scores WHERE episode_number = ${episode}`;
+
+  for (const queen of queens) {
+  for (const rule of scoringRules) {
+    // 1. Ensure the count is a number
+    const count = parseInt(data.get(`stat-${queen.name}-${rule.label}`) || "0");
+
+    if (count !== 0) {
+      // 2. IMPORTANT: Force the rule points to be a float/number
+      // If rule.pts is "10" (string), this makes it 10 (number)
+      // If rule.pts is "-10" (string), this makes it -10 (number)
+      const pointValue = parseFloat(rule.pts); 
+
+      const totalPointsForRule = count * pointValue;
+
+      await sql`
+        INSERT INTO queen_box_scores (queen_name, episode_number, stat_type, points) 
+        VALUES (${queen.name}, ${episode}, ${rule.label}, ${totalPointsForRule})
+      `;
+    }
+  }
+}
+  successMessage = `Episode ${episode} scores have been published! 👑`;
+}
+
+// 3. Handle GET Data (Loading existing scores)
+const url = new URL(Astro.request.url);
+const urlEpisode = url.searchParams.get("episode");
+const activeEpisode = urlEpisode ? parseInt(urlEpisode) : parseInt(settings[0].value);
+
+const existingStats = await sql`
+  SELECT queen_name, stat_type, COUNT(*) as count 
+  FROM queen_box_scores 
+  WHERE episode_number = ${activeEpisode}
+  GROUP BY queen_name, stat_type
+`;
+
+const getCount = (qName, statLabel) => {
+  const match = existingStats.find(s => s.queen_name === qName && s.stat_type === statLabel);
+  return match ? match.count : "";
+};
+---
+
+<MainLayout title="Admin Scoring">
+  <div class="max-w-6xl mx-auto py-10 px-4">
+    
+    <div class="bg-slate-900 p-6 rounded-3xl mb-8 flex justify-between items-center text-white">
+      <h1 class="text-3xl font-black italic uppercase">Editing Episode {activeEpisode}</h1>
+      
+      <form method="GET" class="flex items-center gap-3">
+        <label class="text-[10px] font-bold uppercase tracking-widest opacity-60">Active Episode:</label>
+        <input 
+          type="number" 
+          name="episode" 
+          value={activeEpisode} 
+          onchange="this.form.submit()"
+          class="w-20 p-2 bg-slate-800 rounded-xl border-none font-bold text-center text-white focus:ring-2 focus:ring-pink-500"
+        />
+      </form>
+    </div>
+
+    <form method="POST">
+      <input type="hidden" name="episode" value={activeEpisode} />
+
+      <div class="grid grid-cols-1 gap-8">
+        {queens.map((q) => (
+          /* THE WHITE CARD */
+          <div class="bg-white rounded-3xl border-2 border-slate-100 overflow-hidden shadow-sm">
+            
+            <div class="bg-slate-900 text-white px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+              <div>
+                <h3 class="font-black text-2xl uppercase italic tracking-tighter">{q.name}</h3>
+                <p class="text-[10px] font-bold text-pink-400 uppercase tracking-widest">Episode {activeEpisode} Stats</p>
+              </div>
+              <div class="flex flex-col items-end">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Total Points</span>
+                <span id={`total-${q.name}`} class="text-2xl font-black text-white">0</span>
+              </div>
+            </div> 
+
+            <div class="p-6">
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                {/* --- Performance Section --- */}
+                <div class="space-y-3">
+                  <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-1">Performance</h4>
+                  {scoringRules.filter(r => r.cat === 'Perf').map(rule => (
+                    <div class="flex justify-between items-center gap-2">
+                      <span class="text-xs font-bold text-slate-700">{rule.label}</span>
+                      <input 
+                        type="number" 
+                        name={`stat-${q.name}-${rule.label}`} 
+                        value={getCount(q.name, rule.label)} 
+                        class="queen-input w-12 p-1 bg-slate-50 rounded border-none text-right font-bold text-pink-600 focus:ring-2 focus:ring-pink-500" 
+                        data-pts={rule.pts}
+                        data-queen={q.name}
+                        step="1" 
+                        placeholder="0" 
+                      />
+                    </div>
+                  ))}
+                </div>
+                    {/* --- Look Section --- */}
+                <div class="space-y-3">
+                    <h4 class="text-[10px] font-black text-slate-400 uppercase
+                        tracking-widest border-b pb-1">Look</h4>    
+                    {scoringRules.filter(r => r.cat === 'Look').map(rule => (
+                      <div class="flex justify-between items-center gap-2">
+                        <span class="text-xs font-bold text-slate-700">{rule.label}</span>
+                        <input 
+                          type="number" 
+                          name={`stat-${q.name}-${rule.label}`} 
+                          value={getCount(q.name, rule.label)} 
+                          class="queen-input w-12 p-1 bg-slate-50 rounded border-none text-right font-bold text-pink-600 focus:ring-2 focus:ring-pink-500" 
+                          data-pts={rule.pts}
+                          data-queen={q.name}
+                          step="1" 
+                          placeholder="0" 
+                        />
+                      </div>
+                    ))}
+                </div>
+                {/* --- Misc Section --- */}
+                <div class="space-y-3">
+                  <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-1">Misc</h4>
+                  {scoringRules.filter      (r => r.cat === 'Misc').map(rule => (
+                    <div class="flex justify-between items-center gap-2">
+                      <span class="text-xs font-bold text-slate-700">{rule.label}</span>
+                      <input 
+                        type="number" 
+                        name={`stat-${q.name}-${rule.label}`} 
+                        value={getCount(q.name, rule.label)} 
+                        class="queen-input w-12 p-1 bg-slate-50 rounded border-none text-right font-bold text-pink-600 focus:ring-2 focus:ring-pink-500" 
+                        data-pts={rule.pts}
+                        data-queen={q.name}
+                        step="1" 
+                        placeholder="0" 
+                      />
+                    </div>
+                  ))}
+                </div>
+                {/* --- Drama Section --- */}
+                <div class="space-y-3">
+                  <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-1">Drama</h4>
+                  {scoringRules.filter(r => r.cat === 'Drama').map(rule => (
+                    <div class="flex justify-between items-center gap-2">
+                      <span class="text-xs font-bold text-slate-700">{rule.label}</span>
+                      <input 
+                        type="number" 
+                        name={`stat-${q.name}-${rule.label}`} 
+                        value={getCount(q.name, rule.label)} 
+                        class="queen-input w-12 p-1 bg-slate-50 rounded border-none text-right font-bold text-pink-600 focus:ring-2 focus:ring-pink-500" 
+                        data-pts={rule.pts}
+                        data-queen={q.name}
+                        step="1" 
+                        placeholder="0" 
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div class="sticky bottom-8 mt-12 bg-white/90 backdrop-blur p-4 rounded-3xl border border-slate-200 shadow-2xl">
+        <button type="submit" class="w-full bg-pink-600 hover:bg-pink-700 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-lg transition-all active:scale-95">
+          Update Episode Results 👑
+        </button>
+      </div>
+    </form>
+  </div>
+</MainLayout>
+
+<script is:inline>
+  function calculateTotals() {
+    // 1. We'll store totals in an object where the key is the Queen's name
+    const totals = {};
+
+    // 2. Find every input that has the 'queen-input' class
+    const allInputs = document.querySelectorAll('.queen-input');
+
+    allInputs.forEach(input => {
+      const queen = input.dataset.queen; // From your data-queen attribute
+      const pts = parseInt(input.dataset.pts) || 0; // From your data-pts attribute
+      const count = parseInt(input.value) || 0;
+
+      // Initialize the queen's total if it doesn't exist yet
+      if (!totals[queen]) totals[queen] = 0;
+      
+      // Do the math: count of events * points per event
+      totals[queen] += (count * pts);
+    });
+
+    // 3. Now loop through our totals and update the matching ID on the page
+    for (const [queen, total] of Object.entries(totals)) {
+      const display = document.getElementById(`total-${queen}`);
+      
+      if (display) {
+        display.innerText = total;
+        
+        // Color coding for visual feedback
+        if (total > 0) {
+          display.className = 'text-2xl font-black text-green-500';
+        } else if (total < 0) {
+          display.className = 'text-2xl font-black text-red-500';
+        } else {
+          display.className = 'text-2xl font-black text-white';
+        }
+      }
+    }
+  }
+
+  // Set up the listeners:
+  // 'input' catches every keystroke/arrow click
+  document.addEventListener('input', (e) => {
+    if (e.target.classList.contains('queen-input')) {
+      calculateTotals();
+    }
+  });
+
+  // 'DOMContentLoaded' runs as soon as the HTML is ready (handles existing scores)
+  window.addEventListener('DOMContentLoaded', calculateTotals);
+</script>

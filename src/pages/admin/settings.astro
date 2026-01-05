@@ -1,0 +1,178 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { sql } from '../../lib/db';
+
+const userId = Astro.cookies.get("userId")?.value;
+const user = await sql`SELECT username FROM users WHERE id = ${userId}`;
+
+if (!user[0] || user[0].username !== 'admin') {
+  return Astro.redirect('/dashboard');
+}
+
+// 1. Handle POST Updates
+if (Astro.request.method === "POST") {
+  const data = await Astro.request.formData();
+  const action = data.get("action");
+  
+  // LOGGING: Check your terminal/console to see if this appears!
+  console.log("POST Action received:", action);
+
+  if (action === "update_multipliers") {
+    const keys = ['multiplier_rank_1', 'multiplier_rank_2', 'multiplier_rank_3', 'multiplier_rank_4'];
+    
+    for (const key of keys) {
+      const val = data.get(key)?.toString();
+      if (val) {
+        console.log(`Updating ${key} to ${val}`); // Debugging log
+        await sql`
+          INSERT INTO settings (key, value) 
+          VALUES (${key}, ${val})
+          ON CONFLICT (key) 
+          DO UPDATE SET value = ${val}
+        `;
+      }
+    }
+  }
+
+  // ACTION: Update Current Episode
+  if (action === "update_episode") {
+    const newEp = data.get("current_episode");
+    await sql`UPDATE settings SET value = ${newEp} WHERE key = 'current_episode'`;
+  }
+
+  // ACTION: Toggle Lock
+  if (action === "toggle_lock") {
+    const epToToggle = data.get("episode");
+    const currentState = data.get("currentState");
+    const newState = currentState === 'true' ? 'false' : 'true';
+    const keyName = `locked_ep_${epToToggle}`;
+    
+    await sql`
+      INSERT INTO settings (key, value) 
+      VALUES (${keyName}, ${newState})
+      ON CONFLICT (key) 
+      DO UPDATE SET value = ${newState}
+    `;
+  }
+}
+
+// 2. Fetch current state (Moved outside the POST block so it always runs)
+const settingsRows = await sql`SELECT * FROM settings`;
+const settings = Object.fromEntries(settingsRows.map(r => [r.key, r.value]));
+const currentEp = parseInt(settings.current_episode || "1");
+
+// Helpers
+const getSetting = (key) => settings[key] || "1.0";
+const isLocked = (ep) => settings[`locked_ep_${ep}`] === 'true';
+---
+
+<MainLayout title="Admin Settings">
+  <div class="max-w-4xl mx-auto py-10 px-4">
+    <div class="mb-10">
+      <h1 class="text-4xl font-black italic uppercase text-slate-900">League Control Center</h1>
+      <p class="text-slate-500 font-bold uppercase tracking-widest text-xs text-left">Manage Season Flow & Locks</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      
+      <div class="bg-white p-8 rounded-[2.5rem] border-2 border-slate-100 shadow-sm">
+        <div class="mb-6">
+          <h2 class="text-xl font-black uppercase italic text-slate-800">Global Episode</h2>
+          <p class="text-sm text-slate-500">Sets the default week for the entire site.</p>
+        </div>
+        
+        <form method="POST" class="flex items-center gap-4">
+          <input type="hidden" name="action" value="update_episode" />
+          <input 
+            type="number" 
+            name="current_episode" 
+            value={currentEp} 
+            class="w-full p-4 bg-slate-50 rounded-2xl border-none font-black text-2xl text-center focus:ring-2 focus:ring-pink-500"
+          />
+          <button class="bg-slate-900 text-white font-black px-6 py-4 rounded-2xl uppercase text-xs hover:bg-slate-800 transition-all">
+            Update
+          </button>
+        </form>
+      </div>
+
+      <div class="bg-pink-600 p-8 rounded-[2.5rem] text-white shadow-xl shadow-pink-200">
+        <h2 class="text-xl font-black uppercase italic mb-2">System Status</h2>
+        <div class="space-y-4 mt-6">
+          <div class="flex justify-between items-center border-b border-pink-500 pb-2">
+            <span class="text-xs font-bold uppercase opacity-80">Drafting Status</span>
+            <span class="font-black uppercase">{isLocked(currentEp) ? '🔴 Locked' : '🟢 Open'}</span>
+          </div>
+          <div class="flex justify-between items-center border-b border-pink-500 pb-2">
+            <span class="text-xs font-bold uppercase opacity-80">Active Week</span>
+            <span class="font-black uppercase italic">Episode {currentEp}</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="mt-12">
+      <h2 class="text-2xl font-black uppercase italic text-slate-900 mb-6">Episode Locks</h2>
+      <div class="bg-white rounded-[2.5rem] border-2 border-slate-100 overflow-hidden">
+        <table class="w-full text-left">
+          <thead class="bg-slate-50 border-b border-slate-100">
+            <tr>
+              <th class="px-6 py-4 text-[10px] font-black uppercase text-slate-400">Episode</th>
+              <th class="px-6 py-4 text-[10px] font-black uppercase text-slate-400">Draft Status</th>
+              <th class="px-6 py-4 text-right"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-50">
+            {[1,2,3,4,5,6,7,8].map(ep => (
+              <tr>
+                <td class="px-6 py-4 font-black text-slate-700">Episode {ep}</td>
+                <td class="px-6 py-4">
+                  <span class={`text-[10px] font-black uppercase px-3 py-1 rounded-full ${isLocked(ep) ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                    {isLocked(ep) ? 'Locked' : 'Open'}
+                  </span>
+                </td>
+                <td class="px-6 py-4 text-right">
+                  <form method="POST">
+                    <input type="hidden" name="action" value="toggle_lock" />
+                    <input type="hidden" name="episode" value={ep} />
+                    <input type="hidden" name="currentState" value={isLocked(ep) ? 'true' : 'false'} />
+                    <button class="text-[10px] font-black uppercase text-slate-400 hover:text-pink-600 transition-colors">
+                      {isLocked(ep) ? 'Unlock' : 'Lock'}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="bg-white p-8 rounded-[2rem] border-2 border-slate-100 shadow-sm mt-8">
+        <h2 class="text-xl font-black uppercase italic text-slate-800 mb-6">Point Multipliers</h2>
+        
+        <form method="POST" class="grid grid-cols-2 gap-6">
+            <input type="hidden" name="action" value="update_multipliers" />
+
+            {[1, 2, 3, 4].map(num => (
+            <div class="flex flex-col gap-2">
+                <label class="text-[10px] font-black uppercase text-slate-400 ml-2">Rank #{num} Bonus</label>
+                <div class="relative">
+                <input 
+                    type="number" 
+                    name={`multiplier_rank_${num}`} 
+                    step="0.1" 
+                    value={getSetting(`multiplier_rank_${num}`)}
+                    class="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 font-black text-slate-800 focus:border-pink-500 outline-none transition-all"
+                />
+                <span class="absolute right-4 top-4 text-slate-300 font-bold">x</span>
+                </div>
+            </div>
+            ))}
+            
+            <button type="submit" class="col-span-2 bg-slate-900 text-white font-black py-4 rounded-2xl uppercase tracking-widest hover:bg-pink-600 transition-all mt-4">
+            Save Multipliers
+            </button>
+        </form>
+        </div>
+  </div>
+</MainLayout>

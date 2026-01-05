@@ -1,0 +1,183 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { sql } from '../lib/db';
+
+const userId = Astro.cookies.get("userId")?.value;
+if (!userId) return Astro.redirect('/login');
+
+// 1. Fetch Multipliers
+const multSettings = await sql`SELECT * FROM settings WHERE key LIKE 'multiplier_rank_%'`;
+const mults = {
+  1: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_1')?.value || "2.0"),
+  2: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_2')?.value || "1.5"),
+  3: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_3')?.value || "1.0"),
+  4: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_4')?.value || "0.5"),
+};
+
+// 2. Fetch Global Settings (like Current Episode)
+const settingsResult = await sql`SELECT value FROM settings WHERE key = 'current_episode'`;
+const currentEp = settingsResult.length > 0 ? settingsResult[0].value : 1;
+
+// 3. Fetch the team raw data
+const rawTeam = await sql`
+  SELECT 
+    r.queen_name,
+    r.rank, 
+    COALESCE(SUM(qbs.points), 0) as raw_points
+  FROM rosters r
+  LEFT JOIN queen_box_scores qbs ON r.queen_name = qbs.queen_name
+  WHERE r.user_id = ${userId}
+  GROUP BY r.queen_name, r.rank
+  ORDER BY r.rank ASC
+`;
+
+// 4. Apply multipliers (THIS IS THE ONLY VERSION OF myTeam YOU NEED)
+const myTeam = rawTeam.map(q => ({
+  ...q,
+  total_queen_points: (parseFloat(q.raw_points) * (mults[q.rank] || 1.0)).toFixed(1)
+}));
+
+// 5. Fetch score breakdown for the details view
+const scoreBreakdown = await sql`
+  SELECT queen_name, stat_type, points, episode_number
+  FROM queen_box_scores
+  WHERE queen_name IN (SELECT queen_name FROM rosters WHERE user_id = ${userId})
+  ORDER BY episode_number DESC, points DESC
+`;
+
+// 6. Fetch the user's leagues
+const myLeagues = await sql`
+  SELECT l.*, 
+    (SELECT COUNT(*) FROM league_members WHERE league_id = l.id) as member_count
+  FROM leagues l
+  JOIN league_members lm ON l.id = lm.league_id
+  WHERE lm.user_id = ${userId}
+`;
+
+// 7. Handle POST actions (Create/Join)
+if (Astro.request.method === "POST") {
+  const data = await Astro.request.formData();
+  const action = data.get("action");
+
+  if (action === "create_league") {
+    const name = data.get("leagueName");
+    const inviteCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+
+    const [newLeague] = await sql`
+      INSERT INTO leagues (name, invite_code, owner_id) 
+      VALUES (${name}, ${inviteCode}, ${userId})
+      RETURNING id
+    `;
+    
+    await sql`INSERT INTO league_members (league_id, user_id) VALUES (${newLeague.id}, ${userId})`;
+    return Astro.redirect('/dashboard');
+  }
+}
+---
+
+<MainLayout title="My Dashboard">
+  <div class="max-w-6xl mx-auto py-10 px-4">
+    
+    <div class="mb-12 flex justify-between items-end">
+      <div>
+        <h1 class="text-4xl font-black italic uppercase text-slate-900">Your Roster</h1>
+        <p class="text-slate-500 font-bold uppercase tracking-widest text-xs">Season Standings • Ep {currentEp}</p>
+      </div>
+      <a href="/draft" class="text-[10px] font-black uppercase text-pink-600 border-2 border-pink-100 px-4 py-2 rounded-xl hover:bg-pink-50 transition-colors">
+        Edit Team
+      </a>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-12">
+      
+      <div class="lg:col-span-2">
+        {myTeam.length === 0 ? (
+          <div class="bg-white rounded-[3rem] p-12 text-center border-2 border-dashed border-slate-200">
+            <div class="text-5xl mb-4">👸</div>
+            <h2 class="text-2xl font-black uppercase italic text-slate-800">No Queens Drafted!</h2>
+            <p class="text-slate-500 font-medium mb-8">You need to pick your team for Episode {currentEp}.</p>
+            <a href="/draft" class="inline-block bg-pink-600 text-white font-black px-10 py-4 rounded-2xl uppercase tracking-widest shadow-lg shadow-pink-100 hover:scale-105 transition-transform">
+              Go to Draft
+            </a>
+          </div>
+        ) : (
+          <div class="space-y-6">
+            {myTeam.map((q) => (
+              /* ... Keep your existing Queen Card code with the <details> breakdown here ... */
+              <div class="bg-white rounded-3xl border-2 border-slate-100 overflow-hidden shadow-sm hover:border-pink-200 transition-colors">
+                <div class="p-6 flex justify-between items-center">
+                  <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black">
+                      {q.rank}
+                    </div>
+                    <div>
+                      <h3 class="text-xl font-black uppercase italic text-slate-800">{q.queen_name}</h3>
+                      <p class="text-[10px] font-bold text-slate-400 uppercase tracking-tighter text-left">Current Rank in Team</p>
+                    </div>
+                  </div>
+                  <div class="text-right">
+  <span class="text-3xl font-black text-slate-900">{q.total_queen_points}</span>
+  <p class="text-[9px] font-black text-slate-400 uppercase">
+    {q.raw_points} pts × {mults[q.rank]}x
+  </p>
+</div>
+                </div>
+                {/* Score Breakdown Details Area */}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div class="space-y-8">
+        <div class="bg-slate-50 rounded-[2.5rem] p-8 border border-slate-100">
+          <div class="flex justify-between items-center mb-6">
+            <h2 class="text-lg font-black uppercase italic text-slate-900 tracking-wider">Leagues</h2>
+            <button onclick="document.getElementById('createLeagueModal').showModal()" class="text-[10px] font-black uppercase text-pink-600 bg-white px-3 py-1 rounded-lg shadow-sm border border-slate-100 hover:bg-pink-50 transition-all">
+              + New
+            </button>
+          </div>
+
+          <div class="space-y-4">
+            {myLeagues.length > 0 ? (
+              myLeagues.map(league => (
+                <a href={`/leagues/${league.id}`} class="block bg-white p-5 rounded-2xl border border-slate-200 hover:border-pink-500 hover:shadow-md transition-all group">
+                  <h3 class="font-black uppercase italic text-slate-800 group-hover:text-pink-600 transition-colors">{league.name}</h3>
+                  <div class="flex justify-between items-center mt-2">
+                    <span class="text-[9px] font-mono text-slate-400 bg-slate-50 px-2 py-1 rounded">Code: {league.invite_code}</span>
+                    <span class="text-[9px] font-black text-slate-400 uppercase">{league.member_count} 👥</span>
+                  </div>
+                </a>
+              ))
+            ) : (
+              <div class="text-center py-6">
+                <p class="text-slate-400 font-bold uppercase text-[9px] mb-4">No active leagues</p>
+                <button onclick="document.getElementById('createLeagueModal').showModal()" class="text-[10px] font-black uppercase text-pink-600 hover:underline">
+                  Create One Now
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div class="bg-pink-600 rounded-[2rem] p-6 text-white shadow-lg shadow-pink-100">
+          <h3 class="font-black uppercase italic mb-3">Join a Friend</h3>
+          <form method="POST" class="flex gap-2">
+            <input type="hidden" name="action" value="join_league" />
+            <input 
+              type="text" 
+              name="inviteCode" 
+              placeholder="CODE" 
+              maxlength="5"
+              class="w-full bg-white/20 border-none rounded-xl p-3 text-center font-mono font-black placeholder:text-white/50 focus:ring-2 focus:ring-white outline-none"
+            />
+            <button type="submit" class="bg-white text-pink-600 font-black px-4 rounded-xl uppercase text-xs hover:bg-slate-100 transition-colors">
+              Go
+            </button>
+          </form>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</MainLayout>

@@ -1,29 +1,99 @@
 ---
+import MainLayout from '../layouts/MainLayout.astro';
 import { sql } from '../lib/db';
+import bcrypt from 'bcryptjs';
 
 let error = null;
 
 if (Astro.request.method === "POST") {
   try {
     const data = await Astro.request.formData();
-    const user = data.get("username");
-    const pass = data.get("password");
+    const username = data.get("username")?.toString().trim();
+    const password = data.get("password")?.toString();
+    const confirmPassword = data.get("confirmPassword")?.toString();
 
-    if (user && pass) {
-      await sql`INSERT INTO users (username, password_hash) VALUES (${user}, ${pass})`;
-      // Change this to your main dashboard or login page
-      return Astro.redirect('/'); 
+    // 1. Basic Presence Check
+    if (!username || !password || !confirmPassword) {
+      error = "Every field needs to be filled, darling.";
+    } 
+    // 2. Match Check
+    else if (password !== confirmPassword) {
+      error = "Those passwords don't match! Double check your typing.";
+    }
+    // 3. Length Check
+    else if (password.length < 8) {
+      error = "Password is too short. 8 characters minimum!";
+    }
+    else {
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const [newUser] = await sql`
+        INSERT INTO users (username, password_hash) 
+        VALUES (${username}, ${hashedPassword})
+        RETURNING id
+      `;
+
+      Astro.cookies.set("userId", newUser.id.toString(), { 
+        path: "/", 
+        maxAge: 60 * 60 * 24 * 7 
+      });
+
+      return Astro.redirect('/dashboard');
     }
   } catch (e) {
-    console.error(e);
-    error = "Could not create account. " + e.message;
+    console.error("Signup error:", e);
+    error = "That name is taken. Try something else!";
   }
 }
 ---
-<form method="POST">
-  <h1>Join the League</h1>
-  {error && <p style="color:red">{error}</p>}
-  <input name="username" placeholder="Username" required />
-  <input name="password" type="password" placeholder="Password" required />
-  <button type="submit">Sign Up</button>
+
+<MainLayout title="Join the Race">
+  <div class="max-w-md mx-auto py-20 px-6">
+    <h1 class="text-4xl font-black italic uppercase mb-8 text-center">Start your Engines</h1>
+
+    {error && (
+      <div class="bg-red-50 border-2 border-red-200 p-4 rounded-2xl mb-6 text-red-600 font-bold text-sm text-center italic">
+        {error}
+      </div>
+    )}
+
+<form method="POST" class="space-y-6">
+  <div class="space-y-1">
+    <label class="text-[10px] font-black uppercase text-slate-400 ml-2">Stage Name / Username</label>
+    <input 
+      name="username" 
+      type="text" 
+      required 
+      placeholder="e.g. SashaColbyFan"
+      class="w-full p-4 bg-white rounded-2xl border-2 border-slate-100 focus:border-pink-500 focus:ring-4 focus:ring-pink-50 outline-none transition-all placeholder:text-slate-300 font-medium" 
+    />
+  </div>
+
+  <div class="space-y-1">
+    <label class="text-[10px] font-black uppercase text-slate-400 ml-2">Password</label>
+    <input 
+      name="password" 
+      type="password" 
+      required 
+      placeholder="Min. 8 characters"
+      class="w-full p-4 bg-white rounded-2xl border-2 border-slate-100 focus:border-pink-500 focus:ring-4 focus:ring-pink-50 outline-none transition-all placeholder:text-slate-300 font-medium" 
+    />
+  </div>
+
+  <div class="space-y-1">
+    <label class="text-[10px] font-black uppercase text-slate-400 ml-2">Verify Password</label>
+    <input 
+      name="confirmPassword" 
+      type="password" 
+      required 
+      placeholder="Type it once more..."
+      class="w-full p-4 bg-white rounded-2xl border-2 border-slate-100 focus:border-pink-500 focus:ring-4 focus:ring-pink-50 outline-none transition-all placeholder:text-slate-300 font-medium" 
+    />
+  </div>
+
+  <button type="submit" class="w-full bg-pink-600 text-white font-black py-4 rounded-2xl uppercase tracking-widest shadow-lg shadow-pink-100 hover:bg-pink-700 transition-all active:scale-95 mt-4">
+    Register & Start Your Engines
+  </button>
 </form>
+  </div>
+</MainLayout>

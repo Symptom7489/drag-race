@@ -11,6 +11,12 @@
   "dependencies": {
     "@astrojs/netlify": "^6.6.3",
     "@neondatabase/serverless": "^1.0.2",
-    "astro": "^5.16.6"
+    "@tailwindcss/vite": "^4.1.18",
+    "astro": "^5.16.6",
+    "bcryptjs": "^3.0.3",
+    "tailwindcss": "^4.1.18"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6"
   }
 }

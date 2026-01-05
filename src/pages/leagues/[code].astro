@@ -1,0 +1,114 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { sql } from '../../lib/db';
+
+const { code } = Astro.params;
+const userId = Astro.cookies.get("userId")?.value;
+
+if (!userId) return Astro.redirect('/login');
+
+// 1. Get Multipliers from settings
+const multSettings = await sql`SELECT * FROM settings WHERE key LIKE 'multiplier_rank_%'`;
+const mults = {
+  1: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_1')?.value || "2.0"),
+  2: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_2')?.value || "1.5"),
+  3: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_3')?.value || "1.0"),
+  4: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_4')?.value || "0.5"),
+};
+
+// 2. Get League Info
+const leagueInfo = await sql`SELECT id, name, invite_code FROM leagues WHERE invite_code = ${code}`;
+if (leagueInfo.length === 0) return Astro.redirect('/dashboard');
+const league = leagueInfo[0]; // Create a helper for easier naming
+
+// 3. Fetch raw data
+const rawRankings = await sql`
+  SELECT 
+    u.username,
+    u.id as user_id,
+    r.rank,
+    COALESCE(SUM(qbs.points), 0) as raw_points
+  FROM league_members lm
+  JOIN users u ON lm.user_id = u.id
+  JOIN rosters r ON u.id = r.user_id
+  LEFT JOIN queen_box_scores qbs ON r.queen_name = qbs.queen_name 
+    AND r.episode_number = qbs.episode_number
+  WHERE lm.league_id = ${league.id}
+  GROUP BY u.username, u.id, r.rank
+`;
+
+// 4. Group by User and apply Multipliers
+const standingsMap = {};
+
+rawRankings.forEach(row => {
+  if (!standingsMap[row.user_id]) {
+    standingsMap[row.user_id] = { username: row.username, total: 0 };
+  }
+  const multiplier = mults[row.rank] || 1.0;
+  standingsMap[row.user_id].total += (parseFloat(row.raw_points) * multiplier);
+});
+
+// Convert to array and sort
+const finalRankings = Object.values(standingsMap).sort((a, b) => b.total - a.total);
+---
+
+<MainLayout title={league.name}>
+  <div class="max-w-4xl mx-auto py-10 px-4">
+    
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
+      <div>
+        <a href="/dashboard" class="text-[10px] font-black uppercase text-slate-400 hover:text-pink-600 transition-colors">← Back to Dashboard</a>
+        <h1 class="text-4xl font-black italic uppercase text-slate-900 mt-2">{league.name}</h1>
+        <p class="text-pink-500 font-mono font-bold text-sm">Invite Code: {league.invite_code}</p>
+      </div>
+      
+      <div class="bg-slate-900 text-white p-4 rounded-2xl flex items-center gap-4">
+        <div class="text-right">
+          <p class="text-[9px] font-black uppercase opacity-50">Members</p>
+          <p class="text-xl font-black">{finalRankings.length}</p>
+        </div>
+        <div class="w-[1px] h-8 bg-white/20"></div>
+        <div class="text-right">
+          <p class="text-[9px] font-black uppercase opacity-50">League Avg</p>
+          <p class="text-xl font-black">
+            {finalRankings.length > 0 
+              ? (finalRankings.reduce((acc, curr) => acc + curr.total, 0) / finalRankings.length).toFixed(1)
+              : "0.0"}
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-[2.5rem] border-2 border-slate-100 shadow-sm overflow-hidden">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="bg-slate-50 border-b border-slate-100">
+            <th class="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest w-20 text-center">Rank</th>
+            <th class="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest">Player</th>
+            <th class="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {finalRankings.map((player, index) => (
+            <tr class="border-b border-slate-50 last:border-none hover:bg-slate-50/50 transition-colors">
+              <td class="p-6 text-center">
+                {index === 0 ? <span class="text-2xl">👑</span> : 
+                 index === 1 ? <span class="text-xl">🥈</span> : 
+                 index === 2 ? <span class="text-xl">🥉</span> : 
+                 <span class="font-black text-slate-300">#{index + 1}</span>}
+              </td>
+              <td class="p-6">
+                <span class="font-black uppercase italic text-slate-800 text-lg">
+                  {player.username}
+                </span>
+              </td>
+              <td class="p-6 text-right">
+                <span class="text-2xl font-black text-slate-900">{player.total.toFixed(1)}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</MainLayout>

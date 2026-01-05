@@ -1,15 +1,59 @@
 ---
-// src/pages/index.astro
-import { neon } from '@neondatabase/serverless';
+import MainLayout from '../layouts/MainLayout.astro';
 
-const sql = neon(import.meta.env.DATABASE_URL);
-const response = await sql`SELECT 'Connected to Neon!' as status`;
-const status = response[0].status;
+
+// Check if user is logged in via cookie
+const userId = Astro.cookies.get("userId")?.value;
+
+// If they are logged in, just send them to the dashboard
+if (userId) {
+  return Astro.redirect('/dashboard');
+}
 ---
 
-<html>
-  <body>
-    <h1>{status}</h1>
-    <p>If you see 'Connected to Neon!' above, your setup is perfect.</p>
-  </body>
-</html>
+<MainLayout title="Welcome | Fantasy Drag Race">
+  <div class="relative py-16 overflow-hidden">
+    <div class="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full opacity-10 pointer-events-none">
+       <div class="absolute top-10 left-10 w-64 h-64 bg-pink-500 rounded-full blur-3xl"></div>
+       <div class="absolute bottom-10 right-10 w-64 h-64 bg-purple-500 rounded-full blur-3xl"></div>
+    </div>
+
+    <div class="relative text-center">
+      <h1 class="text-6xl md:text-8xl font-black italic tracking-tighter uppercase text-slate-900 mb-4">
+        The <span class="text-pink-600">Ultimate</span> Fantasy
+      </h1>
+      <p class="text-xl md:text-2xl font-medium text-slate-600 max-w-2xl mx-auto mb-10">
+        Draft your team of Season 18 queens, track scores episode-by-episode, and claim the crown.
+      </p>
+
+      <div class="flex flex-col sm:flex-row gap-4 justify-center">
+        <a href="/signup" class="bg-pink-600 hover:bg-pink-700 text-white text-lg font-bold px-10 py-4 rounded-2xl shadow-xl transition-transform hover:scale-105">
+          Join the League
+        </a>
+        <a href="/login" class="bg-white border-2 border-slate-200 hover:border-pink-300 text-slate-700 text-lg font-bold px-10 py-4 rounded-2xl transition-all">
+          Sign In
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <section class="mt-20 grid grid-cols-1 md:grid-cols-3 gap-8">
+    <div class="p-8 bg-white rounded-3xl border border-slate-100 shadow-sm">
+      <div class="text-3xl mb-4">💅</div>
+      <h3 class="text-xl font-bold mb-2 text-slate-800">Draft Your Top 4</h3>
+      <p class="text-slate-500">Pick the queens you think will slay the competition each week.</p>
+    </div>
+    <div class="p-8 bg-white rounded-3xl border border-slate-100 shadow-sm">
+      <div class="text-3xl mb-4">📈</div>
+      <h3 class="text-xl font-bold mb-2 text-slate-800">Real-time Scores</h3>
+      <p class="text-slate-500">Watch the leaderboard change as the episode airs.</p>
+    </div>
+    <div class="p-8 bg-white rounded-3xl border border-slate-100 shadow-sm">
+      <div class="text-3xl mb-4">👑</div>
+      <h3 class="text-xl font-bold mb-2 text-slate-800">Win the Crown</h3>
+      <p class="text-slate-500">Compete against friends to see who has the best drag intuition.</p>
+    </div>
+  </section>
+
+  
+</MainLayout>

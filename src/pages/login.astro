@@ -1,0 +1,96 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { sql } from '../lib/db';
+import bcrypt from 'bcryptjs';
+
+let errorMessage = "";
+
+if (Astro.request.method === "POST") {
+  const data = await Astro.request.formData();
+  const username = data.get("username")?.toString();
+  const password = data.get("password")?.toString();
+
+  // 1. Check if the user even filled out the form
+  if (!username || !password) {
+    errorMessage = "Please enter both username and password.";
+  } else {
+    // 2. Look for the user
+    const result = await sql`SELECT * FROM users WHERE username = ${username}`;
+    const user = result[0];
+
+    // 3. Check if user exists AND has a password_hash
+    if (user && user.password_hash) {
+      try {
+        const isValid = await bcrypt.compare(password, user.password_hash);
+        
+        if (isValid) {
+          Astro.cookies.set("userId", user.id.toString(), { 
+            path: "/", 
+            maxAge: 60 * 60 * 24 * 7 
+          });
+          return Astro.redirect('/dashboard');
+        } else {
+          errorMessage = "Invalid credentials. Sashay away!";
+        }
+      } catch (err) {
+        console.error("Bcrypt error:", err);
+        errorMessage = "Security error. Please try again.";
+      }
+    } else {
+      errorMessage = "Invalid credentials. Sashay away!";
+    }
+  }
+}
+---
+
+<MainLayout title="Login | Fantasy Drag Race">
+  <div class="max-w-md mx-auto mt-16">
+    <div class="bg-white p-8 rounded-3xl shadow-xl border border-slate-100">
+      <div class="text-center mb-8">
+        <h1 class="text-3xl font-black uppercase italic tracking-tighter text-slate-800">Welcome Back</h1>
+        <p class="text-slate-500 font-medium">Log in to manage your draft</p>
+      </div>
+
+      {errorMessage && (
+        <div class="mb-6 p-4 bg-red-50 text-red-600 border border-red-100 rounded-xl text-sm font-bold text-center">
+          {errorMessage}
+        </div>
+      )}
+
+      <form method="POST" class="space-y-6">
+        <div>
+          <label class="block text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Username</label>
+          <input 
+            name="username" 
+            type="text" 
+            required 
+            class="w-full px-4 py-3 rounded-xl bg-slate-50 border-transparent focus:bg-white focus:ring-2 focus:ring-pink-500 transition-all"
+            placeholder="Enter your username"
+          />
+        </div>
+
+        <div>
+          <label class="block text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Password</label>
+          <input 
+            name="password" 
+            type="password" 
+            required 
+            class="w-full px-4 py-3 rounded-xl bg-slate-50 border-transparent focus:bg-white focus:ring-2 focus:ring-pink-500 transition-all"
+            placeholder="••••••••"
+          />
+        </div>
+
+        <button type="submit" class="w-full bg-pink-600 hover:bg-pink-700 text-white font-black py-4 rounded-xl shadow-lg shadow-pink-200 transition-transform active:scale-95">
+          Sign In
+        </button>
+      </form>
+
+      <div class="mt-8 pt-6 border-t border-slate-100 text-center">
+        <p class="text-slate-500 text-sm">
+          New to the league? 
+          <a href="/signup" class="text-pink-600 font-bold hover:underline ml-1">Create an account</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</MainLayout>

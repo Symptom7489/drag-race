@@ -1,0 +1,5 @@
+---
+// src/pages/logout.astro
+Astro.cookies.delete("userId", { path: "/" });
+return Astro.redirect('/');
+---
