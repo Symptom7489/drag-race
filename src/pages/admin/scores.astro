@@ -84,15 +84,15 @@ const urlEpisode = url.searchParams.get("episode");
 const activeEpisode = urlEpisode ? parseInt(urlEpisode) : parseInt(settings[0].value);
 
 const existingStats = await sql`
-  SELECT queen_name, stat_type, COUNT(*) as count 
+  SELECT queen_name, stat_type, points 
   FROM queen_box_scores 
   WHERE episode_number = ${activeEpisode}
-  GROUP BY queen_name, stat_type
+  GROUP BY queen_name, stat_type, queen_box_scores.points
 `;
 
 const getCount = (qName, statLabel) => {
   const match = existingStats.find(s => s.queen_name === qName && s.stat_type === statLabel);
-  return match ? match.count : "";
+  return match ? match.points : "";
 };
 ---
 
@@ -223,6 +223,9 @@ const getCount = (qName, statLabel) => {
         <button type="submit" class="w-full bg-pink-600 hover:bg-pink-700 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-lg transition-all active:scale-95">
           Update Episode Results 👑
         </button>
+        <a href="/admin" class="text-slate-400 hover:text-white text-sm mb-4 inline-block">
+  ← Back to Admin Dashboard
+</a>
       </div>
     </form>
   </div>

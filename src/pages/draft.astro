@@ -1,6 +1,7 @@
 ---
 import MainLayout from '../layouts/MainLayout.astro';
 import { sql } from '../lib/db';
+import { getUserLeagues } from '../lib/queries'; // Assuming this is in your lib
 
 const userId = Astro.cookies.get("userId")?.value;
 if (!userId) return Astro.redirect('/login');
@@ -8,30 +9,46 @@ if (!userId) return Astro.redirect('/login');
 // 1. Fetch Global Settings
 const settingsRows = await sql`SELECT * FROM settings`;
 const settings = Object.fromEntries(settingsRows.map(r => [r.key, r.value]));
-
 const currentEp = parseInt(settings.current_episode || "1");
 const isLocked = settings[`locked_ep_${currentEp}`] === 'true';
 
-// 2. Fetch Existing Roster for THIS specific episode
+// 2. Handle League Selection
+const myLeagues = await getUserLeagues(userId); 
+const selectedLeagueId = Astro.url.searchParams.get('leagueId') || myLeagues[0]?.id;
+
+if (!selectedLeagueId) {
+    // If they aren't in any leagues, they shouldn't be drafting
+    return Astro.redirect('/dashboard?error=no_leagues');
+}
+
+// 3. Fetch Existing Roster for THIS league and episode
 const existingRoster = await sql`
   SELECT r.*, q.image_url 
   FROM rosters r
   LEFT JOIN queens q ON r.queen_name = q.name
-  WHERE r.user_id = ${userId} AND r.episode_number = ${currentEp} 
+  WHERE r.user_id = ${userId} 
+    AND r.episode_number = ${currentEp} 
+    AND r.league_id = ${selectedLeagueId}
   ORDER BY r.rank ASC
 `;
 
 const queens = await sql`SELECT * FROM queens ORDER BY name ASC`;
-const hasDrafted = existingRoster.length > 0;
 
+// Helper to pre-populate slots
+const getQueenAtRank = (rank) => existingRoster.find(r => r.rank === rank);
+
+const slot1 = getQueenAtRank(1);
+const slot2 = getQueenAtRank(2);
+const slot3 = getQueenAtRank(3);
+const slot4 = getQueenAtRank(4);
+
+// 4. Handle POST (Saving the Team)
 if (Astro.request.method === "POST") {
-  if (isLocked) {
-    return new Response("This episode is locked for drafting.", { status: 403 });
-  }
+  if (isLocked) return new Response("Locked", { status: 403 });
 
   const data = await Astro.request.formData();
+  const targetLeagueId = data.get("leagueId"); // Get league from hidden input
   
-  // 1. Get the picks and filter out empties immediately
   const pickedQueens = [
     data.get("queen1"),
     data.get("queen2"),
@@ -39,30 +56,25 @@ if (Astro.request.method === "POST") {
     data.get("queen4")
   ].filter(q => q && q !== "");
 
-  // 2. Validate for duplicates
   const uniquePicks = new Set(pickedQueens);
-  if (uniquePicks.size !== pickedQueens.length) {
-    return Astro.redirect('/draft?error=duplicate');
-  }
+  if (uniquePicks.size !== pickedQueens.length) return Astro.redirect('./draft?error=duplicate');
 
-  // 3. Save to database if we have at least one queen
   if (pickedQueens.length > 0) {
-    // Delete existing roster for this specific week only
-    await sql`DELETE FROM rosters WHERE user_id = ${userId} AND episode_number = ${currentEp}`;
+    // SCOPED DELETE: Only delete this user's team for THIS league and THIS episode
+    await sql`
+      DELETE FROM rosters 
+      WHERE user_id = ${userId} 
+        AND episode_number = ${currentEp} 
+        AND league_id = ${targetLeagueId}
+    `;
     
-    // Insert the new picks
     for (let i = 0; i < pickedQueens.length; i++) {
-      const queenName = pickedQueens[i];
-      const rank = i + 1;
-
-      if (queenName) {
-        await sql`
-          INSERT INTO rosters (user_id, queen_name, rank, episode_number)
-          VALUES (${userId}, ${queenName}, ${rank}, ${currentEp})
-        `;
-      }
+      await sql`
+        INSERT INTO rosters (user_id, queen_name, rank, episode_number, league_id)
+        VALUES (${userId}, ${pickedQueens[i]}, ${i + 1}, ${currentEp}, ${targetLeagueId})
+      `;
     }
-    return Astro.redirect('/dashboard');
+    return Astro.redirect('/dashboard?success=drafted');
   }
 }
 ---
@@ -72,92 +84,69 @@ if (Astro.request.method === "POST") {
   </div>
 )}
 
-<MainLayout title={`Episode ${currentEp} Draft`}>
+<MainLayout title="Draft Your Team">
   <div class="max-w-4xl mx-auto py-10 px-4">
     
-    {isLocked ? (
-      <div class="bg-slate-900 rounded-[2.5rem] p-10 text-center border-4 border-pink-600 shadow-2xl mb-10">
-        <div class="inline-block bg-pink-600 text-white text-[10px] font-black px-4 py-1 rounded-full mb-4 uppercase tracking-[0.3em]">
-          System Locked
+    <div class="mb-8 p-6 bg-slate-900 rounded-[2.5rem] text-white">
+      <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Drafting For League:</label>
+      <select 
+        onchange="window.location.search = '?leagueId=' + this.value"
+        class="w-full bg-transparent text-2xl font-black uppercase italic border-none focus:ring-0 cursor-pointer text-pink-500"
+      >
+        {myLeagues.map(l => (
+          <option value={l.id} selected={l.id == selectedLeagueId}>{l.league_name}</option>
+        ))}
+      </select>
+    </div>
+
+    <form method="POST">
+      <input type="hidden" name="leagueId" value={selectedLeagueId} />
+      <div class="grid grid-cols-2 gap-8 mb-10">
+  {[1, 2, 3, 4].map((num) => {
+    const currentSlot = [slot1, slot2, slot3, slot4][num - 1];
+    return (
+      <div class="bg-white p-8 rounded-[3rem] border-2 border-slate-100 shadow-sm flex flex-col items-center group hover:border-pink-200 transition-all">
+        <div class="relative w-48 h-48 md:w-64 md:h-64 bg-slate-50 rounded-[2.5rem] mb-6 overflow-hidden flex items-center justify-center border-4 border-slate-50 shadow-inner">
+          <span id={`icon-slot-${num}`} class={`text-4xl ${currentSlot ? 'hidden' : ''}`}>👑</span>
+          <img 
+            id={`img-slot-${num}`} 
+            src={currentSlot?.image_url || ''} 
+            class={`w-full h-full object-cover transition-all duration-500 group-hover:scale-110 ${currentSlot ? 'opacity-100' : 'opacity-0'}`} 
+          />
+          <div class="absolute top-4 left-4 bg-slate-900 text-white w-10 h-10 rounded-full flex items-center justify-center font-black italic text-lg shadow-lg">
+            {num}
+          </div>
         </div>
-        <h2 class="text-4xl font-black italic uppercase text-white mb-2">Lineups are Set</h2>
-        <p class="text-slate-400 font-bold uppercase text-xs tracking-widest leading-relaxed">
-          Drafting for Episode {currentEp} is closed.<br/>
-          Check the leaderboard to see how your team is performing!
-        </p>
-      </div>
-    ) : (
-      <div class="mb-10 text-center">
-        <h1 class="text-5xl font-black italic uppercase text-slate-900 leading-tight">Episode {currentEp} Draft</h1>
-        <p class="text-slate-500 font-bold uppercase tracking-widest text-xs mt-2 text-pink-600">
-          Choose your power-rankings for this week
-        </p>
-      </div>
-    )}
-
-    {!isLocked && (
-      <form method="POST" class="space-y-8">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {[1, 2, 3, 4].map((num) => (
-            <div class="group bg-white rounded-[2.5rem] overflow-hidden border-2 border-slate-100 shadow-sm flex flex-col transition-all hover:border-pink-300">
-              
-              <div class="aspect-[4/3] bg-slate-100 flex items-center justify-center relative overflow-hidden">
-                <img 
-                  id={`img-slot-${num}`}
-                  src={existingRoster[num-1]?.image_url || ""} 
-                  class={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ease-out group-hover:scale-110 ${existingRoster[num-1]?.image_url ? 'opacity-100' : 'opacity-0'}`}
-                />
-                
-                <span id={`icon-slot-${num}`} class={`text-3xl opacity-20 grayscale transition-transform group-hover:scale-110 ${existingRoster[num-1]?.image_url ? 'hidden' : 'block'}`}>
-                  👸
-                </span>
-                
-                <div class="absolute top-4 left-4 bg-slate-900 text-white text-[10px] font-black w-7 h-7 rounded-xl flex items-center justify-center italic z-10 shadow-lg group-hover:bg-pink-600 transition-colors">
-                  {num}
-                </div>
-              </div>
-
-              <div class="p-4 bg-white z-20">
-                <label class="text-[10px] font-black uppercase text-slate-400 block mb-2 ml-1">Rank #{num} Bonus</label>
-                <select 
-                  name={`queen${num}`} 
-                  id={`select-slot-${num}`}
-                  required
-                  class="queen-selector w-full bg-slate-50 border-none rounded-2xl py-3 px-4 text-sm font-black uppercase text-slate-800 focus:ring-2 focus:ring-pink-500 outline-none transition-colors"
-                >
-                  <option value="">Select a Queen...</option>
-                  {queens.map(q => (
-                    <option 
-                      value={q.name} 
-                      data-photo={q.image_url} 
-                      selected={existingRoster[num-1]?.queen_name === q.name}
-                    >
-                      {q.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ))}
+        
+        <div class="w-full max-w-xs text-center">
+          <p class="text-[11px] font-black uppercase text-slate-400 mb-3 tracking-[0.2em]">Select Your Rank {num}</p>
+          
+          <select 
+            name={`queen${num}`} 
+            id={`select-slot-${num}`}
+            class="queen-selector w-full bg-slate-50 border-2 border-slate-50 rounded-2xl py-4 px-4 text-sm font-black focus:ring-4 focus:ring-pink-100 focus:border-pink-500 outline-none uppercase transition-all cursor-pointer"
+          >
+            <option value="">— Choose Queen —</option>
+            {queens.map(q => (
+              <option 
+                value={q.name} 
+                data-photo={q.image_url} 
+                selected={currentSlot?.queen_name === q.name}
+              >
+                {q.name}
+              </option>
+            ))}
+          </select>
         </div>
-
-        <button type="submit" class="w-full bg-pink-600 text-white font-black py-6 rounded-[2.5rem] uppercase tracking-widest shadow-xl shadow-pink-100 hover:bg-pink-700 hover:scale-[1.01] transition-all active:scale-95">
-          Lock in Episode {currentEp} Team
-        </button>
-      </form>
-    )}
-
-    {/* 3. SHOW ROSTER AS READ-ONLY IF LOCKED */}
-    {isLocked && existingRoster.length > 0 && (
-       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 opacity-75">
-          {existingRoster.map(q => (
-            <div class="text-center">
-               <img src={q.image_url} class="w-full aspect-square object-cover rounded-2xl grayscale mb-2" />
-               <p class="font-black uppercase italic text-xs text-slate-600">{q.queen_name}</p>
-            </div>
-          ))}
-       </div>
-    )}
+      </div>
+    )
+  })}
+</div>
+      
+      <button type="submit" disabled={isLocked} class="w-full py-4 bg-pink-600 text-white font-black rounded-2xl uppercase tracking-widest hover:scale-105 transition-transform disabled:opacity-50">
+        {isLocked ? '🔒 Episode Locked' : 'Save Lineup'}
+      </button>
+    </form>
   </div>
 </MainLayout>
 

@@ -50,7 +50,12 @@ if (Astro.request.method === "POST") {
     <h1 class="text-4xl font-black italic uppercase text-slate-900 mt-2">
        {league.league_name}
     </h1>
-    <p class="text-pink-500 font-mono font-bold text-sm mb-10">Invite Code: {league.invite_code}</p>
+    <p class="text-pink-500 font-mono font-bold text-sm mb-10">Invite Code: {league.invite_code} <button 
+  onclick={`navigator.clipboard.writeText('${league.invite_code}')`}
+  class="ml-2 text-[10px] bg-slate-100 px-2 py-1 rounded hover:bg-pink-100 transition-colors"
+>
+  Copy Code 📋
+</button></p>
 
     <div class="bg-white rounded-[2.5rem] border-2 border-slate-100 shadow-sm overflow-hidden">
       <table class="w-full text-left border-collapse">

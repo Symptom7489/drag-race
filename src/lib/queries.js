@@ -19,28 +19,29 @@ export async function getCurrentEpisode() {
 export async function getUserLeagues(userId, currentEp) {
   return await sql`
     SELECT 
-      l.id,
+      l.id, 
       l.league_name, 
       l.invite_code,
-      COALESCE(ls.total_score, 0) as season_total,
-      -- Subquery: Sums points only for the current episode and specific league
-      (
-        SELECT COALESCE(SUM(calculated_points), 0) 
+      (SELECT COUNT(*) FROM league_members WHERE league_id = l.id) as member_count,
+      -- Get points for ONLY the current week
+      COALESCE((
+        SELECT SUM(calculated_points) 
         FROM user_queen_scores 
         WHERE user_id = ${userId} 
-        AND episode_number = ${currentEp}
-        AND league_id = l.id
-      ) as weekly_score,
-      -- Subquery: Counts total active members in the league
-      (
-        SELECT COUNT(*) 
-        FROM league_members lm2
-        WHERE lm2.league_id = l.id
-      ) as member_count
+          AND league_id = l.id 
+          AND episode_number = ${currentEp}
+      ), 0) as weekly_score,
+      -- Get total season points
+      COALESCE((
+        SELECT total_score 
+        FROM league_standings 
+        WHERE user_id = ${userId} 
+          AND league_id = l.id
+      ), 0) as season_total
     FROM leagues l
     JOIN league_members lm ON l.id = lm.league_id
-    LEFT JOIN league_standings ls ON l.id = ls.league_id AND ls.user_id = ${userId}
     WHERE lm.user_id = ${userId}
+    ORDER BY l.league_name ASC
   `;
 }
 
@@ -48,7 +49,7 @@ export async function getUserLeagues(userId, currentEp) {
  * Fetches the user's roster and joins it with the calculated scores
  * for the specific episode.
  */
-export async function getUserTeam(userId, currentEp) {
+export async function getUserTeam(userId, currentEp, leagueId) {
   return await sql`
     SELECT 
       r.queen_name,
@@ -58,9 +59,11 @@ export async function getUserTeam(userId, currentEp) {
     LEFT JOIN user_queen_scores uqs ON 
       r.user_id = uqs.user_id AND 
       r.queen_name = uqs.queen_name AND 
-      r.episode_number = uqs.episode_number
+      r.episode_number = uqs.episode_number AND
+      uqs.league_id = r.league_id
     WHERE r.user_id = ${userId} 
-    AND r.episode_number = ${currentEp}
+      AND r.episode_number = ${currentEp}
+      AND r.league_id = ${leagueId}
     ORDER BY r.rank ASC
   `;
 }
@@ -82,10 +85,10 @@ export async function getSettings() {
  */
 export function formatMultipliers(settings) {
   return {
-    1: parseFloat(settings.multiplier_rank_1 || "2.0"),
-    2: parseFloat(settings.multiplier_rank_2 || "1.5"),
-    3: parseFloat(settings.multiplier_rank_3 || "1.0"),
-    4: parseFloat(settings.multiplier_rank_4 || "0.5"),
+    1: parseFloat(settings.multiplier_rank_1 || "2.5"),
+    2: parseFloat(settings.multiplier_rank_2 || "2.0"),
+    3: parseFloat(settings.multiplier_rank_3 || "1.5"),
+    4: parseFloat(settings.multiplier_rank_4 || "1.0"),
   };
 }
 
@@ -119,44 +122,54 @@ export async function getGlobalLeaderboard() {
  * The "Big Engine": Calculates all scores for a specific episode and
  * refreshes the season-long standings table.
  */
-export async function recalculateScores(episodeNumber, multipliers) {
-  // 1. Fetch raw points from rosters and box scores
-  const epPoints = await sql`
-    SELECT 
-      r.user_id, 
-      lm.league_id, 
-      r.rank, 
-      r.queen_name, 
-      COALESCE(SUM(qbs.points), 0) as raw_points
-    FROM rosters r
-    JOIN league_members lm ON r.user_id = lm.user_id
-    LEFT JOIN queen_box_scores qbs ON r.queen_name = qbs.queen_name AND r.episode_number = qbs.episode_number
-    WHERE r.episode_number = ${episodeNumber}
-    GROUP BY r.user_id, lm.league_id, r.rank, r.queen_name
+export async function recalculateScores(episodeNumber) {
+  // 1. Get all roster entries for this episode
+  const allRosters = await sql`
+    SELECT user_id, league_id, queen_name, rank 
+    FROM rosters 
+    WHERE episode_number = ${episodeNumber}
   `;
 
-  // 2. Map through and insert/update calculated scores
-  for (const row of epPoints) {
-    const weighted = parseFloat(row.raw_points) * (multipliers[row.rank] || 1.0);
-    
-    await sql`
-      INSERT INTO user_queen_scores (league_id, user_id, rank, queen_name, calculated_points, episode_number)
-      VALUES (${row.league_id}, ${row.user_id}, ${row.rank}, ${row.queen_name}, ${weighted}, ${episodeNumber})
-      ON CONFLICT (user_id, rank, episode_number) 
-      DO UPDATE SET 
-        queen_name = EXCLUDED.queen_name,
-        calculated_points = EXCLUDED.calculated_points,
-        league_id = EXCLUDED.league_id
-    `;
-  }
+  // 2. Get box scores (using your queen_box_scores table)
+  const queenPoints = await sql`
+    SELECT queen_name, SUM(points) as points 
+    FROM queen_box_scores 
+    WHERE episode_number = ${episodeNumber}
+    GROUP BY queen_name
+  `;
 
-  // 3. Rebuild the standings cache
-  await sql`DELETE FROM league_standings`;
+  const pointsMap = Object.fromEntries(queenPoints.map(p => [p.queen_name, p.points]));
+    const mults = formatMultipliers(await getSettings());
+
+  // 3. Insert/Update individual scores
+for (const roster of allRosters) {
+    const rawPoints = parseFloat(pointsMap[roster.queen_name] || 0);
+    const multiplier = mults[roster.rank] || 1.0;
+    const points = rawPoints * multiplier;
+    // DEBUG
+    console.log(`User: ${roster.user_id} | Queen: ${roster.queen_name} | Raw: ${rawPoints} | Mult: ${multiplier} | Final: ${points}`);
+
+    await sql`
+  INSERT INTO user_queen_scores (user_id, league_id, queen_name, episode_number, calculated_points, rank)
+  VALUES (${roster.user_id}, ${roster.league_id}, ${roster.queen_name}, ${episodeNumber}, ${points}, ${roster.rank})
+  ON CONFLICT (user_id, league_id, queen_name, episode_number) 
+  DO UPDATE SET 
+    calculated_points = EXCLUDED.calculated_points,
+    rank = EXCLUDED.rank
+`;
+}
+
+  // 4. Update Season Totals
   await sql`
-    INSERT INTO league_standings (league_id, user_id, total_score) 
-    SELECT league_id, user_id, SUM(calculated_points) 
-    FROM user_queen_scores 
-    GROUP BY league_id, user_id
+    INSERT INTO league_standings (user_id, league_id, total_score)
+    SELECT 
+      user_id, 
+      league_id, 
+      SUM(calculated_points) as total
+    FROM user_queen_scores
+    GROUP BY user_id, league_id
+    ON CONFLICT (user_id, league_id) 
+    DO UPDATE SET total_score = EXCLUDED.total_score
   `;
 }
 
@@ -240,4 +253,68 @@ export async function getLeagueDetails(leagueId, userId) {
     WHERE l.id = ${leagueId} AND lm.user_id = ${userId}
   `;
   return rows[0];
+}
+
+/**
+ * Saves a queen to a user's roster for a SPECIFIC league and episode.
+ */
+export async function saveRosterSelection(userId, leagueId, episode, selections) {
+  // Clear existing selections for this specific league/episode combo first
+  await sql`
+    DELETE FROM rosters 
+    WHERE user_id = ${userId} AND league_id = ${leagueId} AND episode_number = ${episode}
+  `;
+
+  // Insert new selections
+  // Assumes selections is an array: [{queen_name: 'Bob', rank: 1}, ...]
+  for (const s of selections) {
+    await sql`
+      INSERT INTO rosters (user_id, league_id, queen_name, rank, episode_number)
+      VALUES (${userId}, ${leagueId}, ${s.queen_name}, ${s.rank}, ${episode})
+    `;
+  }
+}
+
+/**
+ * Fetches all leagues for a user and includes their 
+ * specific total score within each league.
+ */
+export async function getUserLeaguesWithScores(userId) {
+  return await sql`
+    SELECT 
+      l.id, 
+      l.league_name, 
+      l.invite_code,
+      (SELECT COUNT(*) FROM league_members WHERE league_id = l.id) as member_count,
+      COALESCE(ls.total_score, 0) as user_total_score
+    FROM leagues l
+    JOIN league_members lm ON l.id = lm.league_id
+    LEFT JOIN league_standings ls ON l.id = ls.league_id AND ls.user_id = ${userId}
+    WHERE lm.user_id = ${userId}
+    ORDER BY l.created_at DESC
+  `;
+}
+
+export async function getUserLeaguesWithScores(userId, currentEp) {
+  return await sql`
+    SELECT 
+      l.id, 
+      l.league_name, 
+      l.invite_code,
+      -- Get total season points from our cache table
+      COALESCE(ls.total_score, 0) as season_total,
+      -- Get points for ONLY the current episode
+      COALESCE((
+        SELECT SUM(calculated_points) 
+        FROM user_queen_scores 
+        WHERE user_id = ${userId} 
+          AND league_id = l.id 
+          AND episode_number = ${currentEp}
+      ), 0) as weekly_score
+    FROM leagues l
+    JOIN league_members lm ON l.id = lm.league_id
+    LEFT JOIN league_standings ls ON l.id = ls.league_id AND ls.user_id = ${userId}
+    WHERE lm.user_id = ${userId}
+    ORDER BY l.league_name ASC
+  `;
 }

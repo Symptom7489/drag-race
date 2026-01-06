@@ -1,6 +1,6 @@
 ---
 import MainLayout from '../layouts/MainLayout.astro'; 
-import { formatMultipliers, getSettings, getUserLeagues, getUserTeam } from '../lib/queries';
+import { formatMultipliers, getSettings, getUserLeagues, getUserTeam, getUserLeaguesWithScores } from '../lib/queries';
 
 const userId = Astro.cookies.get("userId")?.value;
 if (!userId) return Astro.redirect('/login');
@@ -13,12 +13,36 @@ const currentEp = parseInt(settings.current_episode || "1");
 
 const mults = formatMultipliers(settings);
 // 3. Fetch data using that episode number
-const myLeagues = await getUserLeagues(userId, currentEp);
-const myTeam = await getUserTeam(userId, currentEp);
+const myLeagues = await getUserLeaguesWithScores(userId, currentEp);
+// Default to the first league if one isn't specified in the URL
+const activeLeagueId = Astro.url.searchParams.get('leagueId') || myLeagues[0]?.id;
+const activeLeague = myLeagues.find(l => l.id === activeLeagueId);
+
+const myTeam = activeLeagueId 
+  ? await getUserTeam(userId, currentEp, activeLeagueId) 
+  : [];
 
 ---
 
 <MainLayout title="My Dashboard">
+  {Astro.url.searchParams.has('error') && (
+  <div class="max-w-md mx-auto mb-6 bg-red-50 border-2 border-red-100 p-4 rounded-2xl flex items-center gap-3 animate-bounce">
+    <span class="text-xl">🚫</span>
+    <p class="text-xs font-black uppercase text-red-600 tracking-tight">
+      {Astro.url.searchParams.get('error') === 'invalid_code' ? 'Invalid Invite Code. Try again, Hunty!' : 'Something went wrong.'}
+    </p>
+  </div>
+)}
+
+{Astro.url.searchParams.has('success') && (
+  <div class="max-w-md mx-auto mb-6 bg-green-50 border-2 border-green-100 p-4 rounded-2xl flex items-center gap-3 animate-pulse">
+    <span class="text-xl">✨</span>
+    <p class="text-xs font-black uppercase text-green-600 tracking-tight">
+      {Astro.url.searchParams.get('success') === 'created' ? 'League Created! Start your engines!' : 'Action successful!'}
+    </p>
+  </div>
+)}
+
   <div class="max-w-6xl mx-auto py-10 px-4">
     
     <div class="mb-12 flex justify-between items-end">
@@ -71,7 +95,34 @@ const myTeam = await getUserTeam(userId, currentEp);
       <div class="space-y-6">
         <div class="flex justify-between items-center mb-2">
           <h2 class="text-xs font-black uppercase tracking-widest text-slate-400">My Leagues</h2>
-          <button class="text-[10px] font-bold text-pink-600 uppercase">+ Join</button>
+          <div class="relative inline-block text-right">
+  <button 
+    id="join-btn"
+    class="text-[10px] font-black text-pink-600 uppercase hover:text-slate-900 transition-colors focus:outline-none"
+  >
+    + Join League
+  </button>
+  
+  <div 
+    id="join-dropdown" 
+    class="hidden absolute right-0 mt-2 w-64 bg-white border-2 border-slate-100 shadow-2xl rounded-[2rem] p-4 z-50 transform origin-top-right transition-all"
+  >
+    <p class="text-[9px] font-black uppercase text-slate-400 mb-3 px-2">Enter Invite Code</p>
+    <form method="POST" action="/api/join-league">
+      <input 
+        type="text" 
+        name="inviteCode" 
+        placeholder="e.g. A1B2C3D4" 
+        required
+        maxlength="10"
+        class="w-full px-4 py-3 text-sm font-bold rounded-2xl border-2 border-slate-50 focus:border-pink-500 outline-none mb-3 uppercase tracking-widest"
+      />
+      <button type="submit" class="w-full bg-slate-900 text-white text-[10px] font-black py-3 rounded-2xl hover:bg-pink-600 transition-all shadow-lg shadow-slate-200">
+        JOIN ENGINE
+      </button>
+    </form>
+  </div>
+</div>
         </div>
 
         {myLeagues.length > 0 ? (
@@ -137,3 +188,35 @@ const myTeam = await getUserTeam(userId, currentEp);
     </div>
   </div>
 </MainLayout>
+
+<script>
+  const joinBtn = document.getElementById('join-btn');
+  const joinDropdown = document.getElementById('join-dropdown');
+
+  // Toggle dropdown on button click
+  joinBtn.addEventListener('click', (e) => {
+    e.stopPropagation(); // Prevents the 'window' click from firing immediately
+    joinDropdown.classList.toggle('hidden');
+  });
+
+  // Close when clicking anywhere else on the page
+  window.addEventListener('click', (e) => {
+    if (!joinDropdown.contains(e.target)) {
+      joinDropdown.classList.add('hidden');
+    }
+  });
+
+    // Clear the URL query params after 3 seconds so the messages go away
+if (window.location.search.length > 0) {
+  setTimeout(() => {
+    const url = new URL(window.location);
+    url.search = '';
+    window.history.replaceState({}, document.title, url.toString());
+  }, 3000);
+}
+
+  // Close on 'Escape' key
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') joinDropdown.classList.add('hidden');
+  });
+</script>
