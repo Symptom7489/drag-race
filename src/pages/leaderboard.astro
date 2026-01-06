@@ -1,26 +1,13 @@
 ---
 import MainLayout from '../layouts/MainLayout.astro';
-import { sql } from '../lib/db';
+import { getGlobalLeaderboard } from '../lib/queries';
 
-// 1. Fetch Global Settings
-const settingsRows = await sql`SELECT * FROM settings`;
-const settings = Object.fromEntries(settingsRows.map(r => [r.key, r.value]));
-const currentEp = settings.current_episode || "1";
+const rankings = await getGlobalLeaderboard();
 
-// 2. Fetch Rankings from our "Baked" Table
-// We also join with user_queen_scores to find who their #1 rank queen is
-const rankings = await sql`
-  SELECT 
-    u.username,
-    COALESCE(SUM(uqs.calculated_points), 0) as total_score
-  FROM users u
-  LEFT JOIN user_queen_scores uqs ON u.id = uqs.user_id
-  WHERE u.is_active = true
-  GROUP BY u.id, u.username
-  ORDER BY total_score DESC
-`;
-
+// Top 3 for the fancy podium
 const podium = rankings.slice(0, 3);
+
+// Everyone else starting from index 3 (which is rank #4)
 const theRest = rankings.slice(3);
 ---
 

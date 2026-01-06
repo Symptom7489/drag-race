@@ -1,91 +1,28 @@
 ---
-import MainLayout from '../layouts/MainLayout.astro';
-import { sql } from '../lib/db';
+import MainLayout from '../layouts/MainLayout.astro'; 
+import { getSettings, getUserLeagues, getUserTeam } from '../lib/queries';
 
 const userId = Astro.cookies.get("userId")?.value;
 if (!userId) return Astro.redirect('/login');
 
-const multSettings = await sql`SELECT * FROM settings WHERE key LIKE 'multiplier_rank_%'`;
+// 1. Get the settings object
+const settings = await getSettings();
+
+// 2. Extract the current episode (default to 1 if not set)
+const currentEp = parseInt(settings.current_episode || "1");
+
+// 3. Fetch data using that episode number
+const myLeagues = await getUserLeagues(userId, currentEp);
+const myTeam = await getUserTeam(userId, currentEp);
+
+// ... after const settings = await getSettings(); ...
+
 const mults = {
-  1: multSettings.find(s => s.key === 'multiplier_rank_1')?.value || "2.0",
-  2: multSettings.find(s => s.key === 'multiplier_rank_2')?.value || "1.5",
-  3: multSettings.find(s => s.key === 'multiplier_rank_3')?.value || "1.0",
-  4: multSettings.find(s => s.key === 'multiplier_rank_4')?.value || "0.5",
+  1: parseFloat(settings.multiplier_rank_1 || "2.0"),
+  2: parseFloat(settings.multiplier_rank_2 || "1.5"),
+  3: parseFloat(settings.multiplier_rank_3 || "1.0"),
+  4: parseFloat(settings.multiplier_rank_4 || "0.5"),
 };
-
-// 1. Fetch Global Settings
-const settingsRows = await sql`SELECT * FROM settings`;
-const settings = Object.fromEntries(settingsRows.map(r => [r.key, r.value]));
-const currentEp = settings.current_episode || "1";
-
-// 2. Fetch the team using our PRE-CALCULATED scores
-// This joins your Roster with the results of your "Recalculate" button
-const myTeam = await sql`
-  SELECT 
-    r.queen_name,
-    r.rank, 
-    COALESCE(uqs.calculated_points, 0) as total_queen_points
-  FROM rosters r
-  LEFT JOIN user_queen_scores uqs ON r.user_id = uqs.user_id AND r.rank = uqs.rank
-  WHERE r.user_id = ${userId}
-  ORDER BY r.rank ASC
-`;
-
-const myLeagues = await sql`
-  SELECT 
-    l.id,
-    l.league_name, 
-    l.invite_code,
-    COALESCE(ls.total_score, 0) as season_total, -- Fix NaN here
-    (
-      SELECT COALESCE(SUM(calculated_points), 0) 
-      FROM user_queen_scores 
-      WHERE user_id = ${userId} 
-      AND episode_number = ${currentEp}
-      AND league_id = l.id
-    ) as weekly_score, -- Fix NaN here
-    (
-      SELECT COUNT(*) 
-      FROM league_members lm2
-      JOIN users u ON lm2.user_id = u.id 
-      WHERE lm2.league_id = l.id 
-        AND u.is_active = true
-    ) as member_count
-  FROM leagues l
-  JOIN league_members lm ON l.id = lm.league_id
-  LEFT JOIN league_standings ls ON l.id = ls.league_id AND ls.user_id = ${userId}
-  WHERE lm.user_id = ${userId}
-`;
-
-// 4. Handle POST actions (Create/Join)
-if (Astro.request.method === "POST") {
-  const data = await Astro.request.formData();
-  const action = data.get("action");
-
-  if (action === "create_league") {
-    const name = data.get("leagueName");
-    const inviteCode = Math.random().toString(36).substring(2, 7).toUpperCase();
-
-    // Use league_name to match your DB column
-    const [newLeague] = await sql`
-      INSERT INTO leagues (league_name, invite_code, owner_id) 
-      VALUES (${name}, ${inviteCode}, ${userId})
-      RETURNING id
-    `;
-    
-    await sql`INSERT INTO league_members (league_id, user_id) VALUES (${newLeague.id}, ${userId})`;
-    return Astro.redirect('/dashboard');
-  }
-
-  if (action === "join_league") {
-    const code = data.get("inviteCode")?.toString().toUpperCase();
-    const [league] = await sql`SELECT id FROM leagues WHERE invite_code = ${code}`;
-    if (league) {
-      await sql`INSERT INTO league_members (league_id, user_id) VALUES (${league.id}, ${userId}) ON CONFLICT DO NOTHING`;
-      return Astro.redirect('/dashboard');
-    }
-  }
-}
 ---
 
 <MainLayout title="My Dashboard">
