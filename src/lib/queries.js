@@ -45,17 +45,23 @@ export async function getUserLeagues(userId, currentEp) {
 }
 
 /**
- * Retrieves the user's drafted queen roster for a specific episode.
- * Ranks are 1 (Winner) through 4 (Low).
- * @param {string} userId
- * @param {number} currentEp
+ * Fetches the user's roster and joins it with the calculated scores
+ * for the specific episode.
  */
 export async function getUserTeam(userId, currentEp) {
   return await sql`
-    SELECT * FROM rosters 
-    WHERE user_id = ${userId} 
-    AND episode_number = ${currentEp}
-    ORDER BY rank ASC
+    SELECT 
+      r.queen_name,
+      r.rank,
+      COALESCE(uqs.calculated_points, 0) as calculated_points
+    FROM rosters r
+    LEFT JOIN user_queen_scores uqs ON 
+      r.user_id = uqs.user_id AND 
+      r.queen_name = uqs.queen_name AND 
+      r.episode_number = uqs.episode_number
+    WHERE r.user_id = ${userId} 
+    AND r.episode_number = ${currentEp}
+    ORDER BY r.rank ASC
   `;
 }
 
@@ -183,4 +189,55 @@ export async function toggleUserStatus(targetId, currentStatus) {
   return await sql`
     UPDATE users SET is_active = ${!currentStatus} WHERE id = ${targetId}
   `;
+}
+
+/**
+ * Updates a league's name. 
+ * Checks if the requesting user is the creator for security.
+ */
+export async function updateLeagueName(leagueId, userId, newName) {
+  return await sql`
+    UPDATE leagues 
+    SET league_name = ${newName}
+    WHERE id = ${leagueId} AND created_by = ${userId}
+    RETURNING id
+  `;
+}
+
+
+/** CREATE LEAGUE  */
+/**
+ * Creates a new league and joins the creator to it immediately.
+ */
+export async function createLeague(userId, leagueName) {
+  const inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+
+  // We use a transaction or sequence here to ensure both happen or neither does
+  const [newLeague] = await sql`
+    INSERT INTO leagues (invite_code, league_name, created_by)
+    VALUES (${inviteCode}, ${leagueName}, ${userId})
+    RETURNING id
+  `;
+
+  await sql`
+    INSERT INTO league_members (league_id, user_id)
+    VALUES (${newLeague.id}, ${userId})
+  `;
+
+  return newLeague;
+}
+
+/**
+ * Fetches details for a specific league and ensures 
+ * the requesting user is a member.
+ */
+export async function getLeagueDetails(leagueId, userId) {
+  const rows = await sql`
+    SELECT l.*, 
+      (SELECT COUNT(*) FROM league_members WHERE league_id = l.id) as member_count
+    FROM leagues l
+    JOIN league_members lm ON l.id = lm.league_id
+    WHERE l.id = ${leagueId} AND lm.user_id = ${userId}
+  `;
+  return rows[0];
 }

@@ -1,0 +1,111 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { sql } from '../../lib/db';
+
+import { getLeagueDetails, updateLeagueName } from '../../lib/queries'; 
+
+const { id } = Astro.params; 
+const userId = Astro.cookies.get("userId")?.value;
+
+if (!userId) return Astro.redirect('/login');
+
+// 1. Get League Info using the ID
+// We'll use the query we wrote earlier to ensure the user is a member
+const league = await getLeagueDetails(id, userId);
+
+// If the league doesn't exist OR the user isn't a member, kick them out
+if (!league) return Astro.redirect('/dashboard');
+
+// 2. Fetch Rankings (Added user_id to the select so the "You" badge works)
+const finalRankings = await sql`
+  SELECT 
+    u.id as user_id,
+    u.username, 
+    COALESCE(ls.total_score, 0) as total
+  FROM league_standings ls
+  JOIN users u ON ls.user_id = u.id
+  WHERE ls.league_id = ${id}
+    AND u.is_active = true
+  ORDER BY ls.total_score DESC
+`;
+
+if (Astro.request.method === "POST") {
+  const formData = await Astro.request.formData();
+  const action = formData.get("action");
+  
+  if (action === "rename_league") {
+    const newName = formData.get("newName");
+    const result = await updateLeagueName(id, userId, newName);
+    
+    if (result.length > 0) {
+      return Astro.redirect(`/leagues/${id}?success=renamed`);
+    }
+  }
+}
+---
+<MainLayout title={league.league_name}>
+  <div class="max-w-4xl mx-auto py-10 px-4">
+    <a href="/dashboard" class="text-[10px] font-black uppercase text-slate-400 hover:text-pink-600 transition-colors">← Back to Dashboard</a>
+    
+    <h1 class="text-4xl font-black italic uppercase text-slate-900 mt-2">
+       {league.league_name}
+    </h1>
+    <p class="text-pink-500 font-mono font-bold text-sm mb-10">Invite Code: {league.invite_code}</p>
+
+    <div class="bg-white rounded-[2.5rem] border-2 border-slate-100 shadow-sm overflow-hidden">
+      <table class="w-full text-left border-collapse">
+        <thead class="bg-slate-50 border-b border-slate-100">
+          <tr>
+            <th class="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest w-20 text-center">Rank</th>
+            <th class="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest">Player</th>
+            <th class="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Score</th>
+          </tr>
+        </thead>
+<tbody>
+  {finalRankings.map((player, index) => (
+    <tr class={`border-b last:border-none ${player.user_id == userId ? 'bg-pink-50' : ''}`}>
+  <td class="p-4 text-center font-black text-slate-300">#{index + 1}</td>
+  <td class="p-4 font-black uppercase italic text-slate-800">
+    {player.username} 
+    {player.user_id == userId && (
+      <span class="text-[9px] tracking-widest bg-slate-900 text-white px-2 py-0.5 rounded-full ml-2 not-italic font-black uppercase">
+        You
+      </span>
+    )}
+  </td>
+  <td class="p-4 text-right text-xl font-black text-pink-600">
+    {parseFloat(player.total).toFixed(1)}
+  </td>
+</tr>
+  ))}
+</tbody>
+      </table>
+    </div>
+  </div>
+  {league.created_by == userId && (
+  <details class="mb-8 group">
+    <summary class="cursor-pointer text-[10px] font-black uppercase text-slate-400 hover:text-pink-600 transition-colors list-none">
+      ⚙️ League Settings
+    </summary>
+    
+    <div class="mt-4 p-6 bg-slate-50 rounded-3xl border-2 border-slate-100">
+      <form method="POST" class="flex flex-col md:flex-row gap-4">
+        <input type="hidden" name="action" value="rename_league" />
+        <div class="flex-1">
+          <label class="block text-[10px] font-black uppercase text-slate-400 mb-2 px-2">Change League Name</label>
+          <input 
+            type="text" 
+            name="newName" 
+            placeholder={league.league_name}
+            required
+            class="w-full px-4 py-2 rounded-xl border-2 border-white focus:border-pink-500 outline-none font-bold"
+          />
+        </div>
+        <button type="submit" class="self-end bg-slate-900 text-white font-black px-6 py-2 rounded-xl text-xs uppercase hover:bg-pink-600 transition-colors">
+          Update Name
+        </button>
+      </form>
+    </div>
+  </details>
+)}
+</MainLayout>
