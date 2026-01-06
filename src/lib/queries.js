@@ -139,7 +139,8 @@ export async function recalculateScores(episodeNumber) {
   `;
 
   const pointsMap = Object.fromEntries(queenPoints.map(p => [p.queen_name, p.points]));
-    const mults = formatMultipliers(await getSettings());
+  const settings = await getSettings();
+    const mults = formatMultipliers(settings);
 
   // 3. Insert/Update individual scores
 for (const roster of allRosters) {
