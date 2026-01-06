@@ -1,21 +1,16 @@
 ---
 import MainLayout from '../layouts/MainLayout.astro';
 
-
 // Check if user is logged in via cookie
 const userId = Astro.cookies.get("userId")?.value;
-
-// If they are logged in, just send them to the dashboard
-if (userId) {
-  return Astro.redirect('/dashboard');
-}
+const isLoggedIn = !!userId; // Converts the existence of userId to true/false
 ---
 
 <MainLayout title="Welcome | Fantasy Drag Race">
   <div class="relative py-16 overflow-hidden">
     <div class="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full opacity-10 pointer-events-none">
-       <div class="absolute top-10 left-10 w-64 h-64 bg-pink-500 rounded-full blur-3xl"></div>
-       <div class="absolute bottom-10 right-10 w-64 h-64 bg-purple-500 rounded-full blur-3xl"></div>
+        <div class="absolute top-10 left-10 w-64 h-64 bg-pink-500 rounded-full blur-3xl"></div>
+        <div class="absolute bottom-10 right-10 w-64 h-64 bg-purple-500 rounded-full blur-3xl"></div>
     </div>
 
     <div class="relative text-center">
@@ -27,12 +22,23 @@ if (userId) {
       </p>
 
       <div class="flex flex-col sm:flex-row gap-4 justify-center">
-        <a href="/signup" class="bg-pink-600 hover:bg-pink-700 text-white text-lg font-bold px-10 py-4 rounded-2xl shadow-xl transition-transform hover:scale-105">
-          Join the League
-        </a>
-        <a href="/login" class="bg-white border-2 border-slate-200 hover:border-pink-300 text-slate-700 text-lg font-bold px-10 py-4 rounded-2xl transition-all">
-          Sign In
-        </a>
+        {isLoggedIn ? (
+          /* SHOW THIS IF LOGGED IN */
+          <a href="/dashboard" class="bg-slate-900 hover:bg-slate-800 text-white text-lg font-bold px-12 py-4 rounded-2xl shadow-xl transition-transform hover:scale-105 flex items-center gap-2">
+            Go to My Dashboard 
+            <span class="text-pink-500">→</span>
+          </a>
+        ) : (
+          /* SHOW THIS IF NOT LOGGED IN */
+          <>
+            <a href="/signup" class="bg-pink-600 hover:bg-pink-700 text-white text-lg font-bold px-10 py-4 rounded-2xl shadow-xl transition-transform hover:scale-105">
+              Join the League
+            </a>
+            <a href="/login" class="bg-white border-2 border-slate-200 hover:border-pink-300 text-slate-700 text-lg font-bold px-10 py-4 rounded-2xl transition-all">
+              Sign In
+            </a>
+          </>
+        )}
       </div>
     </div>
   </div>
@@ -53,7 +59,14 @@ if (userId) {
       <h3 class="text-xl font-bold mb-2 text-slate-800">Win the Crown</h3>
       <p class="text-slate-500">Compete against friends to see who has the best drag intuition.</p>
     </div>
+    <div class="fixed bottom-6 right-6 z-50">
+  <a href="https://ko-fi.com/fantasydrag" target="_blank" class="flex items-center gap-2 bg-white border border-slate-200 shadow-2xl p-2 pr-4 rounded-full hover:border-pink-500 transition-colors group">
+    <div class="bg-[#ff5e5b] p-2 rounded-full">
+       <img src="https://ko-fi.com/img/cup-border.png" alt="Ko-fi" class="h-5 invert" />
+    </div>
+    <span class="text-sm font-bold text-slate-700 group-hover:text-pink-600">Buy me a coffee</span>
+  </a>
+</div>
   </section>
-
   
 </MainLayout>
