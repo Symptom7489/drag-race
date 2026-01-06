@@ -2,42 +2,25 @@
 import MainLayout from '../layouts/MainLayout.astro';
 import { sql } from '../lib/db';
 
-const settings = await sql`SELECT value FROM settings WHERE key = 'current_episode'`;
-const currentEp = parseInt(settings[0].value);
+// 1. Fetch Global Settings
+const settingsRows = await sql`SELECT * FROM settings`;
+const settings = Object.fromEntries(settingsRows.map(r => [r.key, r.value]));
+const currentEp = settings.current_episode || "1";
 
+// 2. Fetch Rankings from our "Baked" Table
+// We also join with user_queen_scores to find who their #1 rank queen is
 const rankings = await sql`
-  WITH latest_rosters AS (
-    SELECT DISTINCT ON (user_id, rank) user_id, queen_name
-    FROM rosters
-    WHERE episode_number <= ${currentEp}
-    ORDER BY user_id, rank, episode_number DESC
-  ),
-  player_totals AS (
-    SELECT 
-      u.id as user_id,
-      u.username,
-      COALESCE(SUM(qbs.points), 0) as total_score
-    FROM users u
-    JOIN latest_rosters lr ON u.id = lr.user_id
-    LEFT JOIN queen_box_scores qbs ON lr.queen_name = qbs.queen_name
-    GROUP BY u.id, u.username
-  ),
-  mvps AS (
-    SELECT DISTINCT ON (lr.user_id)
-      lr.user_id,
-      lr.queen_name as mvp_queen,
-      SUM(qbs.points) as queen_pts
-    FROM latest_rosters lr
-    JOIN queen_box_scores qbs ON lr.queen_name = qbs.queen_name
-    GROUP BY lr.user_id, lr.queen_name
-    ORDER BY lr.user_id, SUM(qbs.points) DESC
-  )
   SELECT 
-    pt.*,
-    mvps.mvp_queen
-  FROM player_totals pt
-  LEFT JOIN mvps ON pt.user_id = mvps.user_id
-  ORDER BY pt.total_score DESC;
+    u.id as user_id,
+    u.username,
+    ls.total_score,
+    -- Get the name of their Rank 1 queen as the "MVP"
+    (SELECT queen_name FROM rosters WHERE user_id = u.id AND rank = 1 LIMIT 1) as mvp_queen
+  FROM league_standings ls
+  JOIN users u ON ls.user_id = u.id
+  -- If you want this to be a "Global" leaderboard, we don't filter by league_id
+  -- Or you can group by user_id to show their highest score across all leagues
+  ORDER BY ls.total_score DESC
 `;
 
 const podium = rankings.slice(0, 3);
@@ -67,7 +50,9 @@ const theRest = rankings.slice(3);
             </div>
             
             <div class="mt-auto text-center">
-              <span class="text-4xl font-black text-slate-900">{player.total_score}</span>
+              <span class="text-4xl font-black text-slate-900">
+                {parseFloat(player.total_score).toFixed(1)}
+              </span>
               <p class="text-[10px] font-black uppercase tracking-widest text-pink-500">Points</p>
             </div>
           </div>
@@ -97,7 +82,7 @@ const theRest = rankings.slice(3);
               </div>
             </div>
             <div class="bg-slate-900 text-white font-black px-6 py-2 rounded-xl text-xl">
-              {player.total_score}
+              {parseFloat(player.total_score).toFixed(1)}
             </div>
           </div>
         ))}

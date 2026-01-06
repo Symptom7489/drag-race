@@ -5,51 +5,28 @@ import { sql } from '../../lib/db';
 const { code } = Astro.params;
 const userId = Astro.cookies.get("userId")?.value;
 
+// Use your ID (2) to hide yourself from the leaderboard
+const ADMIN_ID = 2; 
+
 if (!userId) return Astro.redirect('/login');
 
-// 1. Get Multipliers from settings
-const multSettings = await sql`SELECT * FROM settings WHERE key LIKE 'multiplier_rank_%'`;
-const mults = {
-  1: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_1')?.value || "2.0"),
-  2: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_2')?.value || "1.5"),
-  3: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_3')?.value || "1.0"),
-  4: parseFloat(multSettings.find(s => s.key === 'multiplier_rank_4')?.value || "0.5"),
-};
-
-// 2. Get League Info - UPDATED COLUMN NAME
+// 1. Get League Info
 const leagueInfo = await sql`SELECT id, league_name, invite_code FROM leagues WHERE invite_code = ${code}`;
 if (leagueInfo.length === 0) return Astro.redirect('/dashboard');
 const league = leagueInfo[0]; 
 
-// 3. Fetch raw data
-const rawRankings = await sql`
+// 2. Fetch Pre-Calculated Standings
+// We join with the users table to get the names
+const finalRankings = await sql`
   SELECT 
-    u.username,
-    u.id as user_id,
-    r.rank,
-    COALESCE(SUM(qbs.points), 0) as raw_points
-  FROM league_members lm
-  JOIN users u ON lm.user_id = u.id
-  JOIN rosters r ON u.id = r.user_id
-  LEFT JOIN queen_box_scores qbs ON r.queen_name = qbs.queen_name 
-    AND r.episode_number = qbs.episode_number
-  WHERE lm.league_id = ${league.id}
-  GROUP BY u.username, u.id, r.rank
+    u.username, 
+    ls.total_score as total
+  FROM league_standings ls
+  JOIN users u ON ls.user_id = u.id
+  WHERE ls.league_id = ${league.id}
+  ORDER BY ls.total_score DESC
 `;
 
-// 4. Group by User and apply Multipliers
-const standingsMap = {};
-
-rawRankings.forEach(row => {
-  if (!standingsMap[row.user_id]) {
-    standingsMap[row.user_id] = { username: row.username, total: 0 };
-  }
-  const multiplier = mults[row.rank] || 1.0;
-  standingsMap[row.user_id].total += (parseFloat(row.raw_points) * multiplier);
-});
-
-// Convert to array and sort
-const finalRankings = Object.values(standingsMap).sort((a, b) => b.total - a.total);
 ---
 <MainLayout title={league.league_name}>
   <div class="max-w-4xl mx-auto py-10 px-4">
@@ -69,15 +46,19 @@ const finalRankings = Object.values(standingsMap).sort((a, b) => b.total - a.tot
             <th class="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Score</th>
           </tr>
         </thead>
-        <tbody>
-          {finalRankings.map((player, index) => (
-            <tr class="border-b border-slate-50 last:border-none hover:bg-slate-50/50 transition-colors">
-              <td class="p-6 text-center font-black text-slate-300">#{index + 1}</td>
-              <td class="p-6 font-black uppercase italic text-slate-800 text-lg">{player.username}</td>
-              <td class="p-6 text-right text-2xl font-black text-slate-900">{player.total.toFixed(1)}</td>
-            </tr>
-          ))}
-        </tbody>
+<tbody>
+  {finalRankings.map((player, index) => (
+    <tr class={`border-b last:border-none ${player.user_id == userId ? 'bg-pink-50' : ''}`}>
+      <td class="p-4 text-center font-black text-slate-300">#{index + 1}</td>
+      <td class="p-4 font-black uppercase italic text-slate-800">
+        {player.username} {player.user_id == userId && <span class="text-[10px] bg-pink-600 text-white px-2 py-1 rounded ml-2 italic">You</span>}
+      </td>
+      <td class="p-4 text-right text-xl font-black text-pink-600">
+        {parseFloat(player.total).toFixed(1)}
+      </td>
+    </tr>
+  ))}
+</tbody>
       </table>
     </div>
   </div>

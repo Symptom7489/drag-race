@@ -5,63 +5,74 @@ import { sql } from '../../lib/db';
 const userId = Astro.cookies.get("userId")?.value;
 const user = await sql`SELECT username FROM users WHERE id = ${userId}`;
 
+// 1. Security Gate
 if (!user[0] || user[0].username !== 'CrewChief') {
   return Astro.redirect('/dashboard');
 }
 
-// 1. Handle POST Updates
+// 2. Handle POST Actions
 if (Astro.request.method === "POST") {
-  const data = await Astro.request.formData();
-  const action = data.get("action");
-  
-  // LOGGING: Check your terminal/console to see if this appears!
-  console.log("POST Action received:", action);
+  const formData = await Astro.request.formData();
+  const action = formData.get("action");
 
   if (action === "update_multipliers") {
     const keys = ['multiplier_rank_1', 'multiplier_rank_2', 'multiplier_rank_3', 'multiplier_rank_4'];
-    
     for (const key of keys) {
-      const val = data.get(key)?.toString();
+      const val = formData.get(key)?.toString();
       if (val) {
-        console.log(`Updating ${key} to ${val}`); // Debugging log
-        await sql`
-          INSERT INTO settings (key, value) 
-          VALUES (${key}, ${val})
-          ON CONFLICT (key) 
-          DO UPDATE SET value = ${val}
-        `;
+        await sql`INSERT INTO settings (key, value) VALUES (${key}, ${val}) ON CONFLICT (key) DO UPDATE SET value = ${val}`;
       }
     }
   }
 
-  // ACTION: Update Current Episode
   if (action === "update_episode") {
-    const newEp = data.get("current_episode");
+    const newEp = formData.get("current_episode");
     await sql`UPDATE settings SET value = ${newEp} WHERE key = 'current_episode'`;
   }
 
-  // ACTION: Toggle Lock
   if (action === "toggle_lock") {
-    const epToToggle = data.get("episode");
-    const currentState = data.get("currentState");
-    const newState = currentState === 'true' ? 'false' : 'true';
-    const keyName = `locked_ep_${epToToggle}`;
-    
-    await sql`
-      INSERT INTO settings (key, value) 
-      VALUES (${keyName}, ${newState})
-      ON CONFLICT (key) 
-      DO UPDATE SET value = ${newState}
-    `;
+    const ep = formData.get("episode");
+    const isCurrentlyLocked = formData.get("currentState") === 'true';
+    const newState = isCurrentlyLocked ? 'false' : 'true';
+    await sql`INSERT INTO settings (key, value) VALUES (${`locked_ep_${ep}`}, ${newState}) ON CONFLICT (key) DO UPDATE SET value = ${newState}`;
   }
-}
 
-// 2. Fetch current state (Moved outside the POST block so it always runs)
+  if (action === "recalculate_scores") {
+    const multRows = await sql`SELECT * FROM settings WHERE key LIKE 'multiplier_rank_%'`;
+    const mults = {
+      1: parseFloat(multRows.find(s => s.key === 'multiplier_rank_1')?.value || "2.0"),
+      2: parseFloat(multRows.find(s => s.key === 'multiplier_rank_2')?.value || "1.5"),
+      3: parseFloat(multRows.find(s => s.key === 'multiplier_rank_3')?.value || "1.0"),
+      4: parseFloat(multRows.find(s => s.key === 'multiplier_rank_4')?.value || "0.5"),
+    };
+
+    const allPoints = await sql`
+      SELECT r.user_id, lm.league_id, r.rank, COALESCE(SUM(qbs.points), 0) as raw_points
+      FROM rosters r
+      JOIN league_members lm ON r.user_id = lm.user_id
+      LEFT JOIN queen_box_scores qbs ON r.queen_name = qbs.queen_name AND r.episode_number = qbs.episode_number
+      GROUP BY r.user_id, lm.league_id, r.rank
+    `;
+
+    await sql`DELETE FROM user_queen_scores`;
+    await sql`DELETE FROM league_standings`;
+
+    for (const row of allPoints) {
+      const weighted = parseFloat(row.raw_points) * (mults[row.rank] || 1.0);
+      await sql`INSERT INTO user_queen_scores (league_id, user_id, rank, calculated_points) VALUES (${row.league_id}, ${row.user_id}, ${row.rank}, ${weighted})`;
+    }
+
+    await sql`INSERT INTO league_standings (league_id, user_id, total_score) SELECT league_id, user_id, SUM(calculated_points) FROM user_queen_scores GROUP BY league_id, user_id`;
+    
+    console.log("Global scores updated for all users!");
+  }
+} // <--- THIS WAS THE MISSING BRACE
+
+// 3. Fetch Data for UI (Always runs)
 const settingsRows = await sql`SELECT * FROM settings`;
 const settings = Object.fromEntries(settingsRows.map(r => [r.key, r.value]));
 const currentEp = parseInt(settings.current_episode || "1");
 
-// Helpers
 const getSetting = (key) => settings[key] || "1.0";
 const isLocked = (ep) => settings[`locked_ep_${ep}`] === 'true';
 ---
@@ -147,6 +158,17 @@ const isLocked = (ep) => settings[`locked_ep_${ep}`] === 'true';
         </table>
       </div>
     </div>
+    <div class="bg-white p-8 rounded-[2rem] border-2 border-slate-100 mt-8">
+  <h2 class="text-xl font-black uppercase italic mb-2 text-slate-900">Season Engine</h2>
+  <p class="text-slate-500 text-xs mb-6 font-bold uppercase">Update all league leaderboards with the latest points and multipliers.</p>
+  
+  <form method="POST">
+    <input type="hidden" name="action" value="recalculate_scores" />
+    <button type="submit" class="w-full bg-pink-600 text-white font-black py-4 rounded-2xl shadow-lg shadow-pink-200 hover:scale-[1.02] active:scale-95 transition-all">
+      🔄 RECALCULATE ALL STANDINGS
+    </button>
+  </form>
+</div>
     <div class="bg-white p-8 rounded-[2rem] border-2 border-slate-100 shadow-sm mt-8">
         <h2 class="text-xl font-black uppercase italic text-slate-800 mb-6">Point Multipliers</h2>
         
