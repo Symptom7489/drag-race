@@ -2,41 +2,63 @@
 import MainLayout from '../../layouts/MainLayout.astro';
 import { sql } from '../../lib/db';
 
+// 1. AUTH & SECURITY
 const userId = Astro.cookies.get("userId")?.value;
-const user = await sql`SELECT username FROM users WHERE id = ${userId}`;
+const userRows = await sql`SELECT username FROM users WHERE id = ${userId}`;
+const user = userRows[0];
 
-// 1. Security Gate
-if (!user[0] || user[0].username !== 'CrewChief') {
+if (!user || user.username !== 'CrewChief') {
   return Astro.redirect('/dashboard');
 }
 
-// 2. Handle POST Actions
+// 2. HANDLE POST ACTIONS
 if (Astro.request.method === "POST") {
   const formData = await Astro.request.formData();
   const action = formData.get("action");
 
+  // A. Multipliers
   if (action === "update_multipliers") {
     const keys = ['multiplier_rank_1', 'multiplier_rank_2', 'multiplier_rank_3', 'multiplier_rank_4'];
     for (const key of keys) {
       const val = formData.get(key)?.toString();
       if (val) {
-        await sql`INSERT INTO settings (key, value) VALUES (${key}, ${val}) ON CONFLICT (key) DO UPDATE SET value = ${val}`;
+        await sql`
+          INSERT INTO settings (key, value) 
+          VALUES (${key}, ${val}) 
+          ON CONFLICT (key) DO UPDATE SET value = ${val}
+        `;
       }
     }
   }
 
-  if (action === "update_episode") {
-    const newEp = formData.get("current_episode");
-    await sql`UPDATE settings SET value = ${newEp} WHERE key = 'current_episode'`;
+  // B. Toggle User Visibility (The New Feature)
+  if (action === "toggle_user_status") {
+    const targetId = formData.get("target_id");
+    const currentStatus = formData.get("current_status") === "true";
+    await sql`UPDATE users SET is_active = ${!currentStatus} WHERE id = ${targetId}`;
   }
 
+  // C. Update Current Episode
+  if (action === "update_episode") {
+    const newEp = formData.get("current_episode");
+    await sql`
+      INSERT INTO settings (key, value) VALUES ('current_episode', ${newEp})
+      ON CONFLICT (key) DO UPDATE SET value = ${newEp}
+    `;
+  }
+
+  // D. Toggle Lock Status
   if (action === "toggle_lock") {
     const ep = formData.get("episode");
     const isCurrentlyLocked = formData.get("currentState") === 'true';
     const newState = isCurrentlyLocked ? 'false' : 'true';
-    await sql`INSERT INTO settings (key, value) VALUES (${`locked_ep_${ep}`}, ${newState}) ON CONFLICT (key) DO UPDATE SET value = ${newState}`;
+    await sql`
+      INSERT INTO settings (key, value) VALUES (${`locked_ep_${ep}`}, ${newState}) 
+      ON CONFLICT (key) DO UPDATE SET value = ${newState}
+    `;
   }
 
+  // E. Recalculate Scores
   if (action === "recalculate_scores") {
     const multRows = await sql`SELECT * FROM settings WHERE key LIKE 'multiplier_rank_%'`;
     const mults = {
@@ -62,17 +84,23 @@ if (Astro.request.method === "POST") {
       await sql`INSERT INTO user_queen_scores (league_id, user_id, rank, calculated_points) VALUES (${row.league_id}, ${row.user_id}, ${row.rank}, ${weighted})`;
     }
 
-    await sql`INSERT INTO league_standings (league_id, user_id, total_score) SELECT league_id, user_id, SUM(calculated_points) FROM user_queen_scores GROUP BY league_id, user_id`;
+    await sql`
+      INSERT INTO league_standings (league_id, user_id, total_score) 
+      SELECT league_id, user_id, SUM(calculated_points) 
+      FROM user_queen_scores 
+      GROUP BY league_id, user_id
+    `;
     
-    console.log("Global scores updated for all users!");
+    console.log("Global scores updated!");
   }
-} // <--- THIS WAS THE MISSING BRACE
+}
 
-// 3. Fetch Data for UI (Always runs)
+// 3. FETCH DATA FOR UI (Runs on every GET or after POST redirect)
+const allUsers = await sql`SELECT id, username, is_active FROM users ORDER BY username ASC`;
 const settingsRows = await sql`SELECT * FROM settings`;
 const settings = Object.fromEntries(settingsRows.map(r => [r.key, r.value]));
-const currentEp = parseInt(settings.current_episode || "1");
 
+const currentEp = parseInt(settings.current_episode || "1");
 const getSetting = (key) => settings[key] || "1.0";
 const isLocked = (ep) => settings[`locked_ep_${ep}`] === 'true';
 ---
@@ -196,5 +224,27 @@ const isLocked = (ep) => settings[`locked_ep_${ep}`] === 'true';
             </button>
         </form>
         </div>
+
+        <div class="bg-white rounded-[2.5rem] p-8 border-2 border-slate-100 shadow-sm mt-8">
+  <h3 class="text-xl font-black uppercase italic mb-6">User Management</h3>
+  <div class="divide-y divide-slate-100">
+    {allUsers.map(u => (
+      <div class="py-4 flex justify-between items-center">
+        <div>
+          <p class="font-bold text-slate-800">{u.username}</p>
+          <p class="text-[10px] uppercase font-black text-slate-400">ID: {u.id}</p>
+        </div>
+        <form method="POST">
+          <input type="hidden" name="action" value="toggle_user_status" />
+          <input type="hidden" name="target_id" value={u.id} />
+          <input type="hidden" name="current_status" value={u.is_active.toString()} />
+          <button class={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${u.is_active ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+            {u.is_active ? '● Active' : '○ Hidden'}
+          </button>
+        </form>
+      </div>
+    ))}
+  </div>
+</div>
   </div>
 </MainLayout>
