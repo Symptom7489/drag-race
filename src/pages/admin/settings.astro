@@ -5,7 +5,7 @@ import { sql } from '../../lib/db';
 const userId = Astro.cookies.get("userId")?.value;
 const user = await sql`SELECT username FROM users WHERE id = ${userId}`;
 
-if (!user[0] || user[0].username !== 'admin') {
+if (!user[0] || user[0].username !== 'CrewChief') {
   return Astro.redirect('/dashboard');
 }
 

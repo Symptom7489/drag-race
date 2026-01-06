@@ -6,7 +6,7 @@ const userId = Astro.cookies.get("userId")?.value;
 const user = await sql`SELECT username FROM users WHERE id = ${userId}`;
 
 // 1. Security Check
-if (!user[0] || user[0].username !== 'admin') {
+if (!user[0] || user[0].username !== 'CrewChief') {
   return Astro.redirect('/dashboard');
 }
 
