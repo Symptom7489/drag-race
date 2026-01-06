@@ -24,6 +24,7 @@ const finalRankings = await sql`
   FROM league_standings ls
   JOIN users u ON ls.user_id = u.id
   WHERE ls.league_id = ${league.id}
+    AND u.is_active = true
   ORDER BY ls.total_score DESC
 `;
 

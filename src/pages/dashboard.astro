@@ -31,14 +31,25 @@ const myTeam = await sql`
   ORDER BY r.rank ASC
 `;
 
-// 3. Fetch the user's leagues + their total score from the standings table
 const myLeagues = await sql`
   SELECT 
     l.id,
     l.league_name, 
     l.invite_code,
-    COALESCE(ls.total_score, 0) as user_score,
-    (SELECT COUNT(*) FROM league_members WHERE league_id = l.id) as member_count
+    COALESCE(ls.total_score, 0) as season_total, -- Fix NaN here
+    (
+      SELECT COALESCE(SUM(calculated_points), 0) 
+      FROM user_queen_scores 
+      WHERE user_id = ${userId} 
+      AND episode_number = ${currentEp}
+    ) as weekly_score, -- Fix NaN here
+    (
+      SELECT COUNT(*) 
+      FROM league_members lm2
+      JOIN users u ON lm2.user_id = u.id 
+      WHERE lm2.league_id = l.id 
+        AND u.is_active = true
+    ) as member_count
   FROM leagues l
   JOIN league_members lm ON l.id = lm.league_id
   LEFT JOIN league_standings ls ON l.id = ls.league_id AND ls.user_id = ${userId}
@@ -139,7 +150,12 @@ if (Astro.request.method === "POST") {
   {league.league_name}
 </h3>
 <div class="mt-2 text-pink-600 font-black text-xl">
-  {parseFloat(league.user_score).toFixed(1)} <span class="text-[10px] text-slate-400 uppercase">Points</span>
+  {parseFloat(league.season_total || 0).toFixed(1)} 
+  <span class="text-[10px] text-slate-400 uppercase tracking-wider">Season Pts</span>
+</div>
+
+<div class="text-purple-600 font-bold text-sm italic">
+  +{parseFloat(league.weekly_score || 0).toFixed(1)} this week
 </div>
 
 {myLeagues.map(league => (

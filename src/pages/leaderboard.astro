@@ -11,16 +11,13 @@ const currentEp = settings.current_episode || "1";
 // We also join with user_queen_scores to find who their #1 rank queen is
 const rankings = await sql`
   SELECT 
-    u.id as user_id,
     u.username,
-    ls.total_score,
-    -- Get the name of their Rank 1 queen as the "MVP"
-    (SELECT queen_name FROM rosters WHERE user_id = u.id AND rank = 1 LIMIT 1) as mvp_queen
-  FROM league_standings ls
-  JOIN users u ON ls.user_id = u.id
-  -- If you want this to be a "Global" leaderboard, we don't filter by league_id
-  -- Or you can group by user_id to show their highest score across all leagues
-  ORDER BY ls.total_score DESC
+    COALESCE(SUM(uqs.calculated_points), 0) as total_score
+  FROM users u
+  LEFT JOIN user_queen_scores uqs ON u.id = uqs.user_id
+  WHERE u.is_active = true
+  GROUP BY u.id, u.username
+  ORDER BY total_score DESC
 `;
 
 const podium = rankings.slice(0, 3);
