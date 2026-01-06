@@ -42,6 +42,7 @@ const myLeagues = await sql`
       FROM user_queen_scores 
       WHERE user_id = ${userId} 
       AND episode_number = ${currentEp}
+      AND league_id = l.id
     ) as weekly_score, -- Fix NaN here
     (
       SELECT COUNT(*) 
