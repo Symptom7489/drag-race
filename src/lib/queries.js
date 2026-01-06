@@ -279,7 +279,7 @@ export async function saveRosterSelection(userId, leagueId, episode, selections)
 /**
  * Fetches all leagues for a user and includes their 
  * specific total score within each league.
- */
+ 
 export async function getUserLeaguesWithScores(userId) {
   return await sql`
     SELECT 
@@ -295,6 +295,7 @@ export async function getUserLeaguesWithScores(userId) {
     ORDER BY l.created_at DESC
   `;
 }
+  */
 
 export async function getUserLeaguesWithScores(userId, currentEp) {
   return await sql`
